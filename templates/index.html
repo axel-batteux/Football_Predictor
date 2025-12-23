@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prédicteur Football ⚽</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚽ PRÉDICTEUR FOOTBALL</h1>
+            <p class="subtitle">Algorithme de prédiction par Loi de Poisson + Pondération Temporelle</p>
+        </header>
+
+        <div class="card">
+            <h2>Sélectionnez la compétition</h2>
+            <div class="competition-grid">
+                {% for key, comp in competitions.items() %}
+                <button class="comp-btn" onclick="selectCompetition('{{ key }}')">
+                    {{ comp.name }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="card" id="match-form" style="display: none;">
+            <h2>Entrez les équipes</h2>
+            <div class="form-group">
+                <label>Équipe à Domicile</label>
+                <input type="text" id="home-team" placeholder="Ex: PSG, Man City, Senegal..." list="teams-list">
+            </div>
+            <div class="vs">VS</div>
+            <div class="form-group">
+                <label>Équipe à l'Extérieur</label>
+                <input type="text" id="away-team" placeholder="Ex: Marseille, Arsenal, Nigeria..." list="teams-list">
+            </div>
+            <datalist id="teams-list"></datalist>
+            <button class="predict-btn" onclick="predict()">🔮 PRÉDIRE</button>
+        </div>
+
+        <div class="card" id="result" style="display: none;">
+            <h2>Résultat de la Prédiction</h2>
+            <div class="match-title" id="match-title"></div>
+            
+            <div class="probabilities">
+                <div class="prob-item">
+                    <div class="prob-label">Victoire Domicile</div>
+                    <div class="prob-bar">
+                        <div class="prob-fill home" id="prob-home"></div>
+                    </div>
+                    <div class="prob-value" id="prob-home-val"></div>
+                </div>
+                <div class="prob-item">
+                    <div class="prob-label">Match Nul</div>
+                    <div class="prob-bar">
+                        <div class="prob-fill draw" id="prob-draw"></div>
+                    </div>
+                    <div class="prob-value" id="prob-draw-val"></div>
+                </div>
+                <div class="prob-item">
+                    <div class="prob-label">Victoire Extérieur</div>
+                    <div class="prob-bar">
+                        <div class="prob-fill away" id="prob-away"></div>
+                    </div>
+                    <div class="prob-value" id="prob-away-val"></div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">Score le + probable</div>
+                    <div class="stat-value" id="score"></div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">xG (Buts attendus)</div>
+                    <div class="stat-value" id="xg"></div>
+                </div>
+            </div>
+
+            <div class="tip" id="tip"></div>
+        </div>
+
+        <div class="error" id="error" style="display: none;"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
