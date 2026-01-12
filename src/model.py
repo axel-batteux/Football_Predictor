@@ -339,6 +339,13 @@ class Ligue1Predictor:
         # Expected Goals (Lambda)
         avg_goals = (self.avg_home_strength + self.avg_away_strength) / 2 if neutral_venue else self.avg_home_strength
         
+        # === TOURNAMENT TUNING (AFCON) ===
+        # Recent results (Jan 2026) show AFCON is defensive/tight.
+        # Many 1-0, 1-1, 0-0. Favorites win narrowly.
+        if is_legacy_mode:
+             # Reduce goal expectation by 15% to match "Tournament Meta"
+             avg_goals *= 0.85
+        
         home_xg = h_attack * a_defense * avg_goals
         away_xg = a_attack * h_defense * avg_goals
 
