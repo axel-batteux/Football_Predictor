@@ -19,26 +19,20 @@ class Ligue1Predictor:
 
     def _load_data(self):
         """Loads data from a specific file or all CSVs matching the league code."""
-        if self.data_file:
-            if os.path.exists(self.data_file):
-                 try:
-                    df = pd.read_csv(self.data_file, encoding='latin1')
-                    return df
-                 except Exception as e:
-                     print(f"Error loading {self.data_file}: {e}")
-                     return pd.DataFrame()
-            else:
-                return pd.DataFrame()
-
-        # Default behavior: Load CSVs starting with league_code (e.g., 'E0' or 'F1')
-        all_files = [
-            os.path.join(self.data_dir, f) 
-            for f in os.listdir(self.data_dir) 
-            if f.endswith('.csv') and f.startswith(self.league_code)
-        ]
-        
         df_list = []
-        for file in all_files:
+        
+        # Determine files to load
+        files_to_load = []
+        if self.data_file and os.path.exists(self.data_file):
+            files_to_load.append(self.data_file)
+        elif self.league_code:
+            files_to_load = [
+                os.path.join(self.data_dir, f) 
+                for f in os.listdir(self.data_dir) 
+                if f.endswith('.csv') and f.startswith(self.league_code)
+            ]
+            
+        for file in files_to_load:
             try:
                 # football-data.co.uk sometimes has encoding issues, try latin1 if utf-8 fails
                 try:
@@ -46,29 +40,36 @@ class Ligue1Predictor:
                 except UnicodeDecodeError:
                     df = pd.read_csv(file, encoding='latin1')
                 
+                # Ensure date parsing works immediately to filter invalid rows early
+                if 'Date' in df.columns:
+                     df = df.dropna(subset=['Date'])
+                
                 # Keep only relevant columns
                 if 'HomeTeam' in df.columns and 'AwayTeam' in df.columns and 'FTHG' in df.columns and 'FTAG' in df.columns:
                     # Load additional shot data if available, otherwise fill with 0
                     cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
-                    if 'HST' in df.columns and 'AST' in df.columns:
-                        cols_to_keep.extend(['HST', 'AST'])
-                    else:
-                        df['HST'] = 0
-                        df['AST'] = 0
-                        cols_to_keep.extend(['HST', 'AST'])
-                        
-                    if 'HS' in df.columns and 'AS' in df.columns:
-                        cols_to_keep.extend(['HS', 'AS'])
-                    else:
-                        df['HS'] = 0
-                        df['AS'] = 0
-                        cols_to_keep.extend(['HS', 'AS'])
+                    
+                    # Manage Shot Data (HS, AS, HST, AST)
+                    for col in ['HST', 'AST', 'HS', 'AS']:
+                        if col not in df.columns:
+                            df[col] = 0
+                        cols_to_keep.append(col)
 
+                    # Manage Estimated xG columns if they exist in file
+                    if 'Estimated_xG_Home' in df.columns:
+                        cols_to_keep.append('Estimated_xG_Home')
+                    if 'Estimated_xG_Away' in df.columns:
+                        cols_to_keep.append('Estimated_xG_Away')
+
+                    # Filter columns
                     df = df[cols_to_keep]
                     df_list.append(df)
             except Exception as e:
                 print(f"Error loading {file}: {e}")
         
+        if not df_list:
+            return pd.DataFrame()
+            
         full_df = pd.concat(df_list, ignore_index=True)
         # Filter out matches that haven't been played (no score)
         full_df = full_df.dropna(subset=['FTHG', 'FTAG'])
