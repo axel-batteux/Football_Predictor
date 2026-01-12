@@ -79,8 +79,8 @@ def predict():
                 
                 # Host country advantage (Morocco only)
                 if team == HOST_COUNTRY:
-                    mods['attack'] *= 1.15  # +15% attack boost for host
-                    # Defense already benefited from squad boost
+                    mods['attack'] *= 1.20  # +20% attack boost for host (Home Crowd)
+                    mods['defense'] *= 0.90 # -10% goals conceded (Defensive Boost)
                 
                 modifiers[team] = mods
         

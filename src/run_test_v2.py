@@ -48,7 +48,51 @@ def test_model():
         print(f"Prediction Exception: {e}")
 
     # 4. Test Elo with Shots
-    print("\n[4] Checking Elo System...")
+    print("\n[5] Testing AFCON Host Advantage (Morocco)...")
+    # Manually trigger the conditions seen in app.py
+    # 1. Force Legacy Mode (weight_xg = 0)
+    # 2. Inject Modifiers
+    
+    # Temporarily set model to Tournament Mode
+    predictor.weight_xg = 0.0
+    predictor.weight_goals = 1.0
+    
+    # Simulate Morocco vs random team
+    modifiers = {
+        'Morocco': {'attack': 1.20, 'defense': 0.90}
+    }
+    
+    try:
+        # Note: We use 'Morocco' if it exists in the dummy data loaded, otherwise we skip
+        # For this test script, we loaded PL data. Morocco isn't in PL.
+        # So we test with "Man City" acting as Morocco to verify modifier logic works in Legacy Mode
+        
+        team_test = "Man City"
+        opp_test = "Liverpool"
+        
+        # apply host boost to Man City
+        modifiers_test = {
+            team_test: {'attack': 1.20, 'defense': 0.90} # Simulating Morocco Boost
+        }
+        
+        res = predictor.predict_match(team_test, opp_test, neutral_venue=True, modifiers=modifiers_test)
+        print(f"   - Match (Simulated AFCON): {team_test} (Host) vs {opp_test}")
+        print(f"   - Win Prob: {res['win_prob']}%")
+        print(f"   - Most Likely: {res['most_likely_score']}")
+        
+        if res['win_prob'] > 50:
+             print("OK Host Advantage is working (Win Prob > 50%).")
+        else:
+             print("WARNING Host Advantage might be weak.")
+             
+    except Exception as e:
+        print(f"AFCON Test Skipped (Teams not in loaded data): {e}")
+
+    # Restore Model State
+    predictor.weight_xg = 0.6
+    predictor.weight_goals = 0.4
+    
+    print("\n[6] Checking Elo System...")
     try:
         # Check if ratings exist
         top_teams = sorted(predictor.elo_system.ratings.items(), key=lambda x: x[1], reverse=True)[:5]

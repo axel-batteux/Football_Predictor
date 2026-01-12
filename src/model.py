@@ -316,8 +316,10 @@ class Ligue1Predictor:
         if modifiers:
             if home_team in modifiers:
                 h_attack *= modifiers[home_team].get('attack', 1.0)
+                h_defense *= modifiers[home_team].get('defense', 1.0)
             if away_team in modifiers:
                 a_attack *= modifiers[away_team].get('attack', 1.0)
+                a_defense *= modifiers[away_team].get('defense', 1.0)
 
         # === HEAD-TO-HEAD ADJUSTMENT ===
         h2h_matches = self.df[
