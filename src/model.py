@@ -213,40 +213,39 @@ class Ligue1Predictor:
         a_attack = self.team_stats.loc[away_team, 'AwayAttackStrength']
         a_defense = self.team_stats.loc[away_team, 'AwayDefenseStrength']
         
-        # Apply Form Modifiers
         h_form = self.form_ratings.get(home_team, 1.0)
         a_form = self.form_ratings.get(away_team, 1.0)
         
-        # Boost Attack/Defense based on form
+        # Boost Attack/Defense based on form (DAMPENED v5.1)
+        # Reduced impact: multiplier was too aggressive
         h_attack *= h_form
-        h_defense *= (2 - h_form) # Good form = Lower defense multiplier (concede less)
+        h_defense *= (2 - h_form) 
         a_attack *= a_form
         a_defense *= (2 - a_form)
         
-        # === 3. PRESTIGE BOOST (Phase 5) ===
-        # Stabilize results for top teams (prevents them from dropping too low due to bad form)
-        # Tier 1 (Galactics) +5% | Tier 2 (Contenders) +3%
+        # === 3. PRESTIGE BOOST (DAMPENED Phase 5.1) ===
+        # Reduced boosts to prevent "Super Team" inflation
         PRESTIGE_BOOSTS = {
-            # Tier 1 (+5%)
-            "Man City": 1.05, "Liverpool": 1.05, "Arsenal": 1.05,
-            "Real Madrid": 1.05, "Barcelona": 1.05,
-            "Bayern Munich": 1.05, "Leverkusen": 1.05,
-            "Paris SG": 1.05,
-            "Inter": 1.05,
+            # Tier 1 (+3%)
+            "Man City": 1.03, "Liverpool": 1.03, "Arsenal": 1.03,
+            "Real Madrid": 1.03, "Barcelona": 1.03,
+            "Bayern Munich": 1.03, "Leverkusen": 1.03,
+            "Paris SG": 1.03,
+            "Inter": 1.03,
             
-            # Tier 2 (+3%)
-            "Chelsea": 1.03, "Tottenham": 1.03,
-            "Atletico Madrid": 1.03,
-            "Dortmund": 1.03, "Leipzig": 1.03,
-            "Juventus": 1.03, "Milan": 1.03, "Napoli": 1.03, "Atalanta": 1.03,
-            "Benfica": 1.03, "Porto": 1.03, "Sporting CP": 1.03,
-            "PSV Eindhoven": 1.03, "Ajax": 1.03, "Feyenoord": 1.03
+            # Tier 2 (+1.5%)
+            "Chelsea": 1.015, "Tottenham": 1.015,
+            "Atletico Madrid": 1.015,
+            "Dortmund": 1.015, "Leipzig": 1.015,
+            "Juventus": 1.015, "Milan": 1.015, "Napoli": 1.015, "Atalanta": 1.015,
+            "Benfica": 1.015, "Porto": 1.015, "Sporting CP": 1.015,
+            "PSV Eindhoven": 1.015, "Ajax": 1.015, "Feyenoord": 1.015
         }
         
         h_prestige = PRESTIGE_BOOSTS.get(home_team, 1.0)
         a_prestige = PRESTIGE_BOOSTS.get(away_team, 1.0)
         
-        # Apply Prestige (Boost Attack, Improve Defense)
+        # Apply Prestige
         h_attack *= h_prestige
         h_defense *= (2 - h_prestige) 
         a_attack *= a_prestige
@@ -254,12 +253,8 @@ class Ligue1Predictor:
         
         # Get Neutral Venue Adjustments
         if neutral_venue:
-            # Average out Home/Away advantages
-            # For neutral venue, we average the current (form-adjusted) home attack with the team's away attack strength
-            # and similarly for defense. This creates a "neutral" profile for the team.
             h_attack = (h_attack + self.team_stats.loc[home_team, 'AwayAttackStrength']) / 2
             h_defense = (h_defense + self.team_stats.loc[home_team, 'AwayDefenseStrength']) / 2
-            
             a_attack = (a_attack + self.team_stats.loc[away_team, 'HomeAttackStrength']) / 2
             a_defense = (a_defense + self.team_stats.loc[away_team, 'HomeDefenseStrength']) / 2
 
@@ -272,50 +267,51 @@ class Ligue1Predictor:
                 a_attack *= modifiers[away_team].get('attack', 1.0)
                 a_defense *= modifiers[away_team].get('defense', 1.0)
 
-        # === ELO ADJUSTMENT ===
-        # Use Elo difference to modify attack/defense strengths (subtle adjustment)
+        # === ELO ADJUSTMENT (DAMPENED) ===
+        # Use Elo difference to modify attack/defense strengths
         elo_diff = self.elo_system.get_rating_difference(home_team, away_team)
-        elo_multiplier = 1.0 + (elo_diff / 1200)  # Very subtle: 1 point per 1200 Elo
-        elo_multiplier = max(0.8, min(elo_multiplier, 1.3))  # Cap between 0.8x and 1.3x
+        # Reduce Elo impact: 1 point per 1500 (was 1200)
+        elo_multiplier = 1.0 + (elo_diff / 1500)  
+        # Cap harder: Max 1.15x (was 1.3x)
+        elo_multiplier = max(0.9, min(elo_multiplier, 1.15)) 
         
         # Apply Elo boost to the stronger team
         if elo_diff > 0:  # Home team is stronger
             h_attack *= elo_multiplier
-            a_defense *= elo_multiplier  # Harder to score against them
+            a_defense *= elo_multiplier 
         else:  # Away team is stronger
-            a_attack *= (2.0 - elo_multiplier)  # Inverse for away
+            a_attack *= (2.0 - elo_multiplier) 
             h_defense *= (2.0 - elo_multiplier)
 
         # === HEAD-TO-HEAD ADJUSTMENT ===
-        # Filter H2H matches and apply extra weight
         h2h_matches = self.df[
             ((self.df['HomeTeam'] == home_team) & (self.df['AwayTeam'] == away_team)) |
             ((self.df['HomeTeam'] == away_team) & (self.df['AwayTeam'] == home_team))
         ]
         
-        if len(h2h_matches) >= 3:  # Only if we have enough H2H history
-            # Calculate H2H-specific goal averages
+        if len(h2h_matches) >= 3:
             h2h_home_goals = h2h_matches[h2h_matches['HomeTeam'] == home_team]['FTHG'].mean()
             h2h_away_goals = h2h_matches[h2h_matches['AwayTeam'] == away_team]['FTAG'].mean()
             
             if pd.notna(h2h_home_goals) and pd.notna(h2h_away_goals):
-                # Blend general stats (70%) with H2H stats (30%)
-                h2h_weight = 0.3
-                # For H2H we use goals purely as sample size is small for xG precision
+                h2h_weight = 0.25 # Reduced slightly from 0.3
                 h_attack = h_attack * (1 - h2h_weight) + (h2h_home_goals / self.avg_home_strength) * h2h_weight
                 a_attack = a_attack * (1 - h2h_weight) + (h2h_away_goals / self.avg_away_strength) * h2h_weight
 
         # Expected Goals (Lambda)
-        # For neutral matches, we use the global average goal rate as the baseline
         avg_goals = (self.avg_home_strength + self.avg_away_strength) / 2 if neutral_venue else self.avg_home_strength
         
         home_xg = h_attack * a_defense * avg_goals
         away_xg = a_attack * h_defense * avg_goals
 
-        # Calculate probabilties for scores 0-9
+        # === REALISM CLAMP ===
+        # Prevent absurd scorelines (e.g. 6-0) by capping xG
+        # It is extremely rare for a team to average > 3.5 goals against a pro defense
+        home_xg = min(home_xg, 3.25)
+        away_xg = min(away_xg, 3.25)
+
         # Calculate probabilties for scores 0-9
         max_goals = 10
-        # Instead of simple Poisson product, use Dixon-Coles adjustment
         
         # 1. Base Poisson Probabilities
         home_probs = [poisson.pmf(i, home_xg) for i in range(max_goals)]
@@ -324,7 +320,7 @@ class Ligue1Predictor:
         # 2. Build Joint Probability Matrix
         prob_matrix = np.outer(home_probs, away_probs)
         
-        # 3. Apply Dixon-Coles Adjustment (boosts 0-0, 1-1, reduces 1-0, 0-1)
+        # 3. Apply Dixon-Coles Adjustment
         prob_matrix = self._dixon_coles_adjustment(prob_matrix, home_xg, away_xg)
 
         # Calculate Outcome Probabilities and categorize scores
@@ -332,11 +328,10 @@ class Ligue1Predictor:
         prob_draw = 0
         prob_away_win = 0
         
-        # Categorize scores by outcome AND keep global list
         home_win_scores = []
         draw_scores = []
         away_win_scores = []
-        all_scores = []  # Global list for precision
+        all_scores = [] 
 
         for h in range(max_goals):
             for a in range(max_goals):
@@ -353,25 +348,22 @@ class Ligue1Predictor:
                     prob_away_win += p
                     away_win_scores.append(((h, a), p))
         
-        # Normalize Probabilities (Dixon-Coles can distort sum to != 1.0)
+        # Normalize Probabilities
         total_prob = prob_home_win + prob_draw + prob_away_win
         if total_prob > 0:
             prob_home_win /= total_prob
             prob_draw /= total_prob
             prob_away_win /= total_prob
             
-            # Re-normalize individual score probabilities for display
             for i in range(len(home_win_scores)):
                 home_win_scores[i] = (home_win_scores[i][0], home_win_scores[i][1] / total_prob)
             for i in range(len(draw_scores)):
                 draw_scores[i] = (draw_scores[i][0], draw_scores[i][1] / total_prob)
             for i in range(len(away_win_scores)):
                 away_win_scores[i] = (away_win_scores[i][0], away_win_scores[i][1] / total_prob)
-            # Re-normalize global list
             all_scores = [((s[0], s[1]), p / total_prob) for (s, p) in all_scores]
         
         # HYBRID INTELLIGENT SELECTION
-        # Score 1: Most probable score from the most likely outcome (COHERENCE)
         outcomes = [
             (prob_home_win, home_win_scores, "home_win"),
             (prob_draw, draw_scores, "draw"),
@@ -383,9 +375,7 @@ class Ligue1Predictor:
         most_likely_outcome_scores.sort(key=lambda x: x[1], reverse=True)
         score_1 = most_likely_outcome_scores[0] if most_likely_outcome_scores else ((0, 0), 0)
         
-        # Score 2: Second most probable score GLOBALLY (PRECISION)
         all_scores.sort(key=lambda x: x[1], reverse=True)
-        # Find the second score that's different from score_1
         score_2 = ((0, 0), 0)
         for score, prob in all_scores:
             if score != score_1[0]:
@@ -413,45 +403,31 @@ class Ligue1Predictor:
         self.form_ratings = {}
         
         for team in self.teams:
-            # Get all matches for this team, sorted by date
             matches = self.df[(self.df['HomeTeam'] == team) | (self.df['AwayTeam'] == team)].sort_values('Date')
             
             if len(matches) < 5:
                 self.form_ratings[team] = 1.0
                 continue
                 
-            # Helper to get result performance (0-1 scale)
-            # Win = 1.0, Draw = 0.5, Loss = 0.0
-            # AND adjusted by domination (xG)
             def get_performance(row):
                 is_home = row['HomeTeam'] == team
                 goals_for = row['FTHG'] if is_home else row['FTAG']
                 goals_against = row['FTAG'] if is_home else row['FTHG']
                 
-                # Base result
                 if goals_for > goals_against: result = 1.0
                 elif goals_for == goals_against: result = 0.5
                 else: result = 0.0
-                
                 return result
 
             perfs = matches.apply(get_performance, axis=1).values
             
-            # Calculate sliding windows
             f5 = np.mean(perfs[-5:]) if len(perfs) >= 5 else 0.5
             f10 = np.mean(perfs[-10:]) if len(perfs) >= 10 else f5
             f15 = np.mean(perfs[-15:]) if len(perfs) >= 15 else f10
             
-            # Weighted Form Index
-            # 50% Last 5 (Immediate form)
-            # 30% Last 10 (Short term)
-            # 20% Last 15 (Medium term)
-            # Center around 1.0 (Average form is 0.5 on result scale -> we want multiplier)
-            # Formula: 0.5 result -> 1.0 multiplier. 1.0 result -> 1.2 multiplier
-            
             raw_form = (f5 * 0.5) + (f10 * 0.3) + (f15 * 0.2)
-            # Map [0, 1] to [0.8, 1.2]
-            form_multiplier = 0.8 + (raw_form * 0.4)
+            # Map [0, 1] to [0.9, 1.1] (Dampened from 0.8-1.2)
+            form_multiplier = 0.9 + (raw_form * 0.2)
             
             self.form_ratings[team] = form_multiplier
 
