@@ -184,6 +184,29 @@ class Ligue1Predictor:
         # Merge stats
         self.team_stats = pd.merge(home_stats, away_stats, left_index=True, right_index=True, how='outer')
         
+        # === TOURNAMENT POOLING (Fix for AFCON) ===
+        # If we are in "Legacy/Goals Only" mode (AFCON), we should NOT split Home/Away stats.
+        # Why? Because samples are small (3-4 games) and venues are neutral.
+        # Splitting splits the sample size in half -> Noise.
+        # Pooling makes "Mali" have one strength rating based on ALL games.
+        if self.weight_xg == 0.0:
+            print(f"[INFO] Tournament Mode detected for {self.league_code}. Pooling Home/Away stats.")
+            
+            # Simple Pooling: Average the Home and Away raw stats (if they exist)
+            # We fillna(0) to handle cases where a team only played Home or only Away
+            self.team_stats = self.team_stats.fillna(0)
+            
+            # Calculate Global Average per team
+            # We treat Home and Away performances as equal contributors to "Form/Ability"
+            self.team_stats['GlobalScored'] = (self.team_stats['AvgHomeGoalsScored'] + self.team_stats['AvgAwayGoalsScored']) / 2
+            self.team_stats['GlobalConceded'] = (self.team_stats['AvgHomeGoalsConceded'] + self.team_stats['AvgAwayGoalsConceded']) / 2
+            
+            # Overwrite Home/Away specific stats with Global
+            self.team_stats['AvgHomeGoalsScored'] = self.team_stats['GlobalScored']
+            self.team_stats['AvgAwayGoalsScored'] = self.team_stats['GlobalScored']
+            self.team_stats['AvgHomeGoalsConceded'] = self.team_stats['GlobalConceded']
+            self.team_stats['AvgAwayGoalsConceded'] = self.team_stats['GlobalConceded']
+
         # Calculate Strength Metrics (using Hybrid values)
         # STRICT Separation: Home Attack only compares to Home Avg, etc.
         self.team_stats['HomeAttackStrength'] = self.team_stats['AvgHomeGoalsScored'] / self.avg_home_strength
