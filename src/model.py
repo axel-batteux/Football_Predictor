@@ -213,44 +213,49 @@ class Ligue1Predictor:
         a_attack = self.team_stats.loc[away_team, 'AwayAttackStrength']
         a_defense = self.team_stats.loc[away_team, 'AwayDefenseStrength']
         
-        h_form = self.form_ratings.get(home_team, 1.0)
-        a_form = self.form_ratings.get(away_team, 1.0)
+        # === MODIFIER CALCULATION (ADDITIVE LOGIC) ===
+        # v5.2: Switch from Multiplicative (A*B*C) to Additive (1 + A + B + C) to prevent exponential blowouts
         
-        # Boost Attack/Defense based on form (DAMPENED v5.1)
-        # Reduced impact: multiplier was too aggressive
-        h_attack *= h_form
-        h_defense *= (2 - h_form) 
-        a_attack *= a_form
-        a_defense *= (2 - a_form)
+        # 1. Form Modifier (Relative to 1.0)
+        h_form_mod = self.form_ratings.get(home_team, 1.0) - 1.0
+        a_form_mod = self.form_ratings.get(away_team, 1.0) - 1.0
         
-        # === 3. PRESTIGE BOOST (DAMPENED Phase 5.1) ===
-        # Reduced boosts to prevent "Super Team" inflation
+        # 2. Prestige Modifier (Relative to 1.0)
+        # Tier 1 (+4%) Tier 2 (+2%) - Restored slightly higher values now that stacking is fixed
         PRESTIGE_BOOSTS = {
-            # Tier 1 (+3%)
-            "Man City": 1.03, "Liverpool": 1.03, "Arsenal": 1.03,
-            "Real Madrid": 1.03, "Barcelona": 1.03,
-            "Bayern Munich": 1.03, "Leverkusen": 1.03,
-            "Paris SG": 1.03,
-            "Inter": 1.03,
-            
-            # Tier 2 (+1.5%)
-            "Chelsea": 1.015, "Tottenham": 1.015,
-            "Atletico Madrid": 1.015,
-            "Dortmund": 1.015, "Leipzig": 1.015,
-            "Juventus": 1.015, "Milan": 1.015, "Napoli": 1.015, "Atalanta": 1.015,
-            "Benfica": 1.015, "Porto": 1.015, "Sporting CP": 1.015,
-            "PSV Eindhoven": 1.015, "Ajax": 1.015, "Feyenoord": 1.015
+            "Man City": 1.04, "Liverpool": 1.04, "Arsenal": 1.04,
+            "Real Madrid": 1.04, "Barcelona": 1.04, "Bayern Munich": 1.04, "Leverkusen": 1.04,
+            "Paris SG": 1.04, "Inter": 1.04,
+            "Chelsea": 1.02, "Tottenham": 1.02, "Atletico Madrid": 1.02,
+            "Dortmund": 1.02, "Leipzig": 1.02, "Juventus": 1.02, "Milan": 1.02,
+            "Benfica": 1.02, "Porto": 1.02, "Sporting CP": 1.02
         }
+        h_prestige_mod = PRESTIGE_BOOSTS.get(home_team, 1.0) - 1.0
+        a_prestige_mod = PRESTIGE_BOOSTS.get(away_team, 1.0) - 1.0
         
-        h_prestige = PRESTIGE_BOOSTS.get(home_team, 1.0)
-        a_prestige = PRESTIGE_BOOSTS.get(away_team, 1.0)
+        # 3. Elo Modifier (Relative to 1.0)
+        elo_diff = self.elo_system.get_rating_difference(home_team, away_team)
+        # 1 point per 1400 difference
+        elo_val = elo_diff / 1400
+        elo_val = max(-0.25, min(elo_val, 0.25)) # Clamp effect size +/- 25%
         
-        # Apply Prestige
-        h_attack *= h_prestige
-        h_defense *= (2 - h_prestige) 
-        a_attack *= a_prestige
-        a_defense *= (2 - a_prestige)
+        # Calculate Total Modifiers (Additive)
+        # Home Attack gets: Form + Prestige + (Elo if +)
+        h_attack_boost = h_form_mod + h_prestige_mod + (elo_val if elo_val > 0 else 0)
+        # Home Defense gets: Form (inv) + Prestige (inv) + (Elo if +)
+        # Defense boost means "Lower is better" (multiplying by < 1)
+        # We model this as reducing the CONCEDED goals
+        h_defense_boost = - (h_form_mod + h_prestige_mod + (elo_val if elo_val > 0 else 0))
+
+        a_attack_boost = a_form_mod + a_prestige_mod + (-elo_val if elo_val < 0 else 0)
+        a_defense_boost = - (a_form_mod + a_prestige_mod + (-elo_val if elo_val < 0 else 0))
         
+        # Apply Additive Modifiers
+        h_attack *= (1.0 + h_attack_boost)
+        h_defense *= (1.0 + h_defense_boost * 0.5) # Def modifiers have half impact (harder to defend perfectly)
+        a_attack *= (1.0 + a_attack_boost)
+        a_defense *= (1.0 + a_defense_boost * 0.5)
+
         # Get Neutral Venue Adjustments
         if neutral_venue:
             h_attack = (h_attack + self.team_stats.loc[home_team, 'AwayAttackStrength']) / 2
@@ -258,30 +263,12 @@ class Ligue1Predictor:
             a_attack = (a_attack + self.team_stats.loc[away_team, 'HomeAttackStrength']) / 2
             a_defense = (a_defense + self.team_stats.loc[away_team, 'HomeDefenseStrength']) / 2
 
-        # Apply Modifiers (Squad Quality, Host Advantage, etc.)
+        # Apply Manual Modifiers
         if modifiers:
             if home_team in modifiers:
                 h_attack *= modifiers[home_team].get('attack', 1.0)
-                h_defense *= modifiers[home_team].get('defense', 1.0)
             if away_team in modifiers:
                 a_attack *= modifiers[away_team].get('attack', 1.0)
-                a_defense *= modifiers[away_team].get('defense', 1.0)
-
-        # === ELO ADJUSTMENT (DAMPENED) ===
-        # Use Elo difference to modify attack/defense strengths
-        elo_diff = self.elo_system.get_rating_difference(home_team, away_team)
-        # Reduce Elo impact: 1 point per 1500 (was 1200)
-        elo_multiplier = 1.0 + (elo_diff / 1500)  
-        # Cap harder: Max 1.15x (was 1.3x)
-        elo_multiplier = max(0.9, min(elo_multiplier, 1.15)) 
-        
-        # Apply Elo boost to the stronger team
-        if elo_diff > 0:  # Home team is stronger
-            h_attack *= elo_multiplier
-            a_defense *= elo_multiplier 
-        else:  # Away team is stronger
-            a_attack *= (2.0 - elo_multiplier) 
-            h_defense *= (2.0 - elo_multiplier)
 
         # === HEAD-TO-HEAD ADJUSTMENT ===
         h2h_matches = self.df[
@@ -294,7 +281,7 @@ class Ligue1Predictor:
             h2h_away_goals = h2h_matches[h2h_matches['AwayTeam'] == away_team]['FTAG'].mean()
             
             if pd.notna(h2h_home_goals) and pd.notna(h2h_away_goals):
-                h2h_weight = 0.25 # Reduced slightly from 0.3
+                h2h_weight = 0.25
                 h_attack = h_attack * (1 - h2h_weight) + (h2h_home_goals / self.avg_home_strength) * h2h_weight
                 a_attack = a_attack * (1 - h2h_weight) + (h2h_away_goals / self.avg_away_strength) * h2h_weight
 
@@ -304,12 +291,17 @@ class Ligue1Predictor:
         home_xg = h_attack * a_defense * avg_goals
         away_xg = a_attack * h_defense * avg_goals
 
-        # === REALISM CLAMP ===
-        # Prevent absurd scorelines (e.g. 6-0) by capping xG
-        # It is extremely rare for a team to average > 3.5 goals against a pro defense
-        home_xg = min(home_xg, 3.25)
-        away_xg = min(away_xg, 3.25)
-
+        # === SOFT SATURATION (Diminishing Returns) ===
+        # Instead of a hard cap, we apply a "Soft Ceiling" function
+        # If xG > 2.5, every extra point is worth less
+        # f(x) = 2.5 + (x - 2.5) ^ 0.7  for x > 2.5
+        def soft_saturate(val, threshold=2.5):
+            if val <= threshold: return val
+            return threshold + (val - threshold) ** 0.65
+            
+        home_xg = soft_saturate(home_xg)
+        away_xg = soft_saturate(away_xg)
+        
         # Calculate probabilties for scores 0-9
         max_goals = 10
         
