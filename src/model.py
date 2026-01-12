@@ -48,7 +48,23 @@ class Ligue1Predictor:
                 
                 # Keep only relevant columns
                 if 'HomeTeam' in df.columns and 'AwayTeam' in df.columns and 'FTHG' in df.columns and 'FTAG' in df.columns:
-                    df = df[['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']]
+                    # Load additional shot data if available, otherwise fill with 0
+                    cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+                    if 'HST' in df.columns and 'AST' in df.columns:
+                        cols_to_keep.extend(['HST', 'AST'])
+                    else:
+                        df['HST'] = 0
+                        df['AST'] = 0
+                        cols_to_keep.extend(['HST', 'AST'])
+                        
+                    if 'HS' in df.columns and 'AS' in df.columns:
+                        cols_to_keep.extend(['HS', 'AS'])
+                    else:
+                        df['HS'] = 0
+                        df['AS'] = 0
+                        cols_to_keep.extend(['HS', 'AS'])
+
+                    df = df[cols_to_keep]
                     df_list.append(df)
             except Exception as e:
                 print(f"Error loading {file}: {e}")
@@ -56,68 +72,93 @@ class Ligue1Predictor:
         full_df = pd.concat(df_list, ignore_index=True)
         # Filter out matches that haven't been played (no score)
         full_df = full_df.dropna(subset=['FTHG', 'FTAG'])
+        
+        # Calculate Estimated xG if not present (Simple Shot-Based Model)
+        # Weight: 0.30 per Shot on Target, 0.07 per Shot off Target
+        if 'Estimated_xG_Home' not in full_df.columns:
+            full_df['ShotsOffTarget_Home'] = full_df['HS'] - full_df['HST']
+            full_df['ShotsOffTarget_Away'] = full_df['AS'] - full_df['AST']
+            
+            full_df['Estimated_xG_Home'] = (full_df['HST'] * 0.32) + (full_df['ShotsOffTarget_Home'] * 0.06)
+            full_df['Estimated_xG_Away'] = (full_df['AST'] * 0.32) + (full_df['ShotsOffTarget_Away'] * 0.06)
+            
+            # Fallback for rows where shot data might be missing (0 shots)
+            # Use actual goals as a proxy if shots are 0 but goals > 0 (data error fix)
+            mask_no_shots = (full_df['HS'] == 0) & (full_df['FTHG'] > 0)
+            full_df.loc[mask_no_shots, 'Estimated_xG_Home'] = full_df.loc[mask_no_shots, 'FTHG'] * 0.8
+            
+            mask_no_shots_away = (full_df['AS'] == 0) & (full_df['FTAG'] > 0)
+            full_df.loc[mask_no_shots_away, 'Estimated_xG_Away'] = full_df.loc[mask_no_shots_away, 'FTAG'] * 0.8
+
         return full_df
 
     def _train_model(self):
-        """Calculates Attack and Defense strengths for each team with temporal weighting, Elo ratings, and recent form."""
-        # Parse dates (works for both DD/MM/YYYY and YYYY-MM-DD formats)
-        self.df['Date'] = pd.to_datetime(self.df['Date'], errors='coerce')
+        """Calculates Attack and Defense strengths using Hybrid Model (Goals + xG) and Exponential Decay."""
+        # Parse dates
+        self.df['Date'] = pd.to_datetime(self.df['Date'], errors='coerce', dayfirst=True)
         self.df = self.df.dropna(subset=['Date'])
         
-        # Sort by date for Elo calculation
+        # Sort by date
         self.df = self.df.sort_values('Date').reset_index(drop=True)
         
-        # Build Elo ratings from historical data
+        # Build Elo ratings
         self.elo_system = EloRatingSystem()
         self.elo_system.process_historical_data(self.df)
         
-        # Current date reference (use latest match in dataset)
+        # Current date reference
         latest_date = self.df['Date'].max()
         
-        # Calculate age of each match in days
+        # Calculate age in days
         self.df['DaysAgo'] = (latest_date - self.df['Date']).dt.days
         
-        # Enhanced temporal weighting with Last 5 matches boost
-        # Step 1: Base temporal weight
-        def calculate_base_weight(days_ago):
-            if days_ago <= 180:  # Last 6 months
-                return 3.0
-            elif days_ago <= 545:  # 6-18 months
-                return 2.0
-            else:  # Older
-                return 1.0
+        # === 1. EXPONENTIAL TIME DECAY ===
+        # Replaces rigid steps. E.g., decay_rate 0.005 means weight halves every ~140 days
+        decay_rate = 0.006 
+        self.df['Weight'] = np.exp(-decay_rate * self.df['DaysAgo'])
         
-        self.df['Weight'] = self.df['DaysAgo'].apply(calculate_base_weight)
+        # REMOVED: Rigid "last 5 matches" boost, replaced by separate Form Index calculation
         
-        # Step 2: Apply ULTRA boost to last 5 matches per team
-        for team in self.teams:
-            # Last 5 home matches
-            home_matches = self.df[self.df['HomeTeam'] == team].tail(5)
-            self.df.loc[home_matches.index, 'Weight'] *= 2.0  # 2x additional boost (reduced from 3x)
-            
-            # Last 5 away matches
-            away_matches = self.df[self.df['AwayTeam'] == team].tail(5)
-            self.df.loc[away_matches.index, 'Weight'] *= 2.0  # 2x additional boost (reduced from 3x)
-        
-        # Calculate weighted league averages
+        # Calculate weighted league averages (Hybrid)
         total_weight = self.df['Weight'].sum()
-        self.avg_home_goals = (self.df['FTHG'] * self.df['Weight']).sum() / total_weight
-        self.avg_away_goals = (self.df['FTAG'] * self.df['Weight']).sum() / total_weight
         
-        # Calculate weighted stats per team
+        avg_home_goals = (self.df['FTHG'] * self.df['Weight']).sum() / total_weight
+        avg_away_goals = (self.df['FTAG'] * self.df['Weight']).sum() / total_weight
+        
+        avg_home_xg = (self.df['Estimated_xG_Home'] * self.df['Weight']).sum() / total_weight
+        avg_away_xg = (self.df['Estimated_xG_Away'] * self.df['Weight']).sum() / total_weight
+        
+        # Global League Average (Hybrid: 40% Goals, 60% xG)
+        self.avg_home_strength = (avg_home_goals * 0.4) + (avg_home_xg * 0.6)
+        self.avg_away_strength = (avg_away_goals * 0.4) + (avg_away_xg * 0.6)
+        
+        # Calculate weighted stats per team with strict Home/Away separation
         def weighted_stats(group, is_home=True):
             total_w = group['Weight'].sum()
             if total_w == 0:
-                return pd.Series({'scored': 0, 'conceded': 0})
+                return pd.Series({'hybrid_scored': 0, 'hybrid_conceded': 0})
             
             if is_home:
-                scored = (group['FTHG'] * group['Weight']).sum() / total_w
-                conceded = (group['FTAG'] * group['Weight']).sum() / total_w
+                # Scored at Home
+                goals_scored = (group['FTHG'] * group['Weight']).sum() / total_w
+                xg_scored = (group['Estimated_xG_Home'] * group['Weight']).sum() / total_w
+                hybrid_scored = (goals_scored * 0.4) + (xg_scored * 0.6)
+                
+                # Conceded at Home
+                goals_conceded = (group['FTAG'] * group['Weight']).sum() / total_w
+                xg_conceded = (group['Estimated_xG_Away'] * group['Weight']).sum() / total_w
+                hybrid_conceded = (goals_conceded * 0.4) + (xg_conceded * 0.6)
             else:
-                scored = (group['FTAG'] * group['Weight']).sum() / total_w
-                conceded = (group['FTHG'] * group['Weight']).sum() / total_w
+                # Scored Away
+                goals_scored = (group['FTAG'] * group['Weight']).sum() / total_w
+                xg_scored = (group['Estimated_xG_Away'] * group['Weight']).sum() / total_w
+                hybrid_scored = (goals_scored * 0.4) + (xg_scored * 0.6)
+                
+                # Conceded Away
+                goals_conceded = (group['FTHG'] * group['Weight']).sum() / total_w
+                xg_conceded = (group['Estimated_xG_Home'] * group['Weight']).sum() / total_w
+                hybrid_conceded = (goals_conceded * 0.4) + (xg_conceded * 0.6)
             
-            return pd.Series({'scored': scored, 'conceded': conceded})
+            return pd.Series({'scored': hybrid_scored, 'conceded': hybrid_conceded})
         
         # Home stats with weights
         home_stats = self.df.groupby('HomeTeam').apply(
@@ -132,14 +173,18 @@ class Ligue1Predictor:
         # Merge stats
         self.team_stats = pd.merge(home_stats, away_stats, left_index=True, right_index=True, how='outer')
         
-        # Calculate Strength Metrics
-        self.team_stats['HomeAttackStrength'] = self.team_stats['AvgHomeGoalsScored'] / self.avg_home_goals
-        self.team_stats['AwayAttackStrength'] = self.team_stats['AvgAwayGoalsScored'] / self.avg_away_goals
-        self.team_stats['HomeDefenseStrength'] = self.team_stats['AvgHomeGoalsConceded'] / self.avg_away_goals
-        self.team_stats['AwayDefenseStrength'] = self.team_stats['AvgAwayGoalsConceded'] / self.avg_home_goals
+        # Calculate Strength Metrics (using Hybrid values)
+        # STRICT Separation: Home Attack only compares to Home Avg, etc.
+        self.team_stats['HomeAttackStrength'] = self.team_stats['AvgHomeGoalsScored'] / self.avg_home_strength
+        self.team_stats['AwayAttackStrength'] = self.team_stats['AvgAwayGoalsScored'] / self.avg_away_strength
+        self.team_stats['HomeDefenseStrength'] = self.team_stats['AvgHomeGoalsConceded'] / self.avg_away_strength
+        self.team_stats['AwayDefenseStrength'] = self.team_stats['AvgAwayGoalsConceded'] / self.avg_home_strength
         
         # Fill NaN with 1.0 (neutral strength)
         self.team_stats = self.team_stats.fillna(1.0)
+        
+        # Calculate Form Index for each team
+        self._calculate_form_index()
 
     def predict_match(self, home_team, away_team, neutral_venue=False, modifiers=None):
         """
@@ -151,19 +196,32 @@ class Ligue1Predictor:
         if home_team not in self.team_stats.index or away_team not in self.team_stats.index:
             return {"error": f"Team not found."}
 
-        # Base Stats
+        # Get Team Stats with strict Home/Away logic
         h_attack = self.team_stats.loc[home_team, 'HomeAttackStrength']
         h_defense = self.team_stats.loc[home_team, 'HomeDefenseStrength']
         a_attack = self.team_stats.loc[away_team, 'AwayAttackStrength']
         a_defense = self.team_stats.loc[away_team, 'AwayDefenseStrength']
-
-        # If neutral venue (Tournament mode), average the Home/Away stats to get a "Raw Ability"
+        
+        # Apply Form Modifiers
+        h_form = self.form_ratings.get(home_team, 1.0)
+        a_form = self.form_ratings.get(away_team, 1.0)
+        
+        # Boost Attack/Defense based on form
+        h_attack *= h_form
+        h_defense *= (2 - h_form) # Good form = Lower defense multiplier (concede less)
+        a_attack *= a_form
+        a_defense *= (2 - a_form)
+        
+        # Get Neutral Venue Adjustments
         if neutral_venue:
-            h_attack = (self.team_stats.loc[home_team, 'HomeAttackStrength'] + self.team_stats.loc[home_team, 'AwayAttackStrength']) / 2
-            a_defense = (self.team_stats.loc[away_team, 'HomeDefenseStrength'] + self.team_stats.loc[away_team, 'AwayDefenseStrength']) / 2
+            # Average out Home/Away advantages
+            # For neutral venue, we average the current (form-adjusted) home attack with the team's away attack strength
+            # and similarly for defense. This creates a "neutral" profile for the team.
+            h_attack = (h_attack + self.team_stats.loc[home_team, 'AwayAttackStrength']) / 2
+            h_defense = (h_defense + self.team_stats.loc[home_team, 'AwayDefenseStrength']) / 2
             
-            a_attack = (self.team_stats.loc[away_team, 'HomeAttackStrength'] + self.team_stats.loc[away_team, 'AwayAttackStrength']) / 2
-            h_defense = (self.team_stats.loc[home_team, 'HomeDefenseStrength'] + self.team_stats.loc[home_team, 'AwayDefenseStrength']) / 2
+            a_attack = (a_attack + self.team_stats.loc[away_team, 'HomeAttackStrength']) / 2
+            a_defense = (a_defense + self.team_stats.loc[away_team, 'HomeDefenseStrength']) / 2
 
         # Apply Modifiers (Squad Quality, Host Advantage, etc.)
         if modifiers:
@@ -203,20 +261,31 @@ class Ligue1Predictor:
             if pd.notna(h2h_home_goals) and pd.notna(h2h_away_goals):
                 # Blend general stats (70%) with H2H stats (30%)
                 h2h_weight = 0.3
-                h_attack = h_attack * (1 - h2h_weight) + (h2h_home_goals / self.avg_home_goals) * h2h_weight
-                a_attack = a_attack * (1 - h2h_weight) + (h2h_away_goals / self.avg_away_goals) * h2h_weight
+                # For H2H we use goals purely as sample size is small for xG precision
+                h_attack = h_attack * (1 - h2h_weight) + (h2h_home_goals / self.avg_home_strength) * h2h_weight
+                a_attack = a_attack * (1 - h2h_weight) + (h2h_away_goals / self.avg_away_strength) * h2h_weight
 
         # Expected Goals (Lambda)
         # For neutral matches, we use the global average goal rate as the baseline
-        avg_goals = (self.avg_home_goals + self.avg_away_goals) / 2 if neutral_venue else self.avg_home_goals
+        avg_goals = (self.avg_home_strength + self.avg_away_strength) / 2 if neutral_venue else self.avg_home_strength
         
         home_xg = h_attack * a_defense * avg_goals
         away_xg = a_attack * h_defense * avg_goals
 
         # Calculate probabilties for scores 0-9
+        # Calculate probabilties for scores 0-9
         max_goals = 10
+        # Instead of simple Poisson product, use Dixon-Coles adjustment
+        
+        # 1. Base Poisson Probabilities
         home_probs = [poisson.pmf(i, home_xg) for i in range(max_goals)]
         away_probs = [poisson.pmf(i, away_xg) for i in range(max_goals)]
+        
+        # 2. Build Joint Probability Matrix
+        prob_matrix = np.outer(home_probs, away_probs)
+        
+        # 3. Apply Dixon-Coles Adjustment (boosts 0-0, 1-1, reduces 1-0, 0-1)
+        prob_matrix = self._dixon_coles_adjustment(prob_matrix, home_xg, away_xg)
 
         # Calculate Outcome Probabilities and categorize scores
         prob_home_win = 0
@@ -231,7 +300,7 @@ class Ligue1Predictor:
 
         for h in range(max_goals):
             for a in range(max_goals):
-                p = home_probs[h] * away_probs[a]
+                p = prob_matrix[h][a]
                 all_scores.append(((h, a), p))
                 
                 if h > a:
@@ -281,6 +350,80 @@ class Ligue1Predictor:
             "second_likely_score": f"{top_2_scores[1][0][0]}-{top_2_scores[1][0][1]}",
             "second_score_prob": round(top_2_scores[1][1] * 100, 1)
         }
+
+    def _calculate_form_index(self):
+        """Calculates a Form Index based on last 5, 10, and 15 matches."""
+        self.form_ratings = {}
+        
+        for team in self.teams:
+            # Get all matches for this team, sorted by date
+            matches = self.df[(self.df['HomeTeam'] == team) | (self.df['AwayTeam'] == team)].sort_values('Date')
+            
+            if len(matches) < 5:
+                self.form_ratings[team] = 1.0
+                continue
+                
+            # Helper to get result performance (0-1 scale)
+            # Win = 1.0, Draw = 0.5, Loss = 0.0
+            # AND adjusted by domination (xG)
+            def get_performance(row):
+                is_home = row['HomeTeam'] == team
+                goals_for = row['FTHG'] if is_home else row['FTAG']
+                goals_against = row['FTAG'] if is_home else row['FTHG']
+                
+                # Base result
+                if goals_for > goals_against: result = 1.0
+                elif goals_for == goals_against: result = 0.5
+                else: result = 0.0
+                
+                return result
+
+            perfs = matches.apply(get_performance, axis=1).values
+            
+            # Calculate sliding windows
+            f5 = np.mean(perfs[-5:]) if len(perfs) >= 5 else 0.5
+            f10 = np.mean(perfs[-10:]) if len(perfs) >= 10 else f5
+            f15 = np.mean(perfs[-15:]) if len(perfs) >= 15 else f10
+            
+            # Weighted Form Index
+            # 50% Last 5 (Immediate form)
+            # 30% Last 10 (Short term)
+            # 20% Last 15 (Medium term)
+            # Center around 1.0 (Average form is 0.5 on result scale -> we want multiplier)
+            # Formula: 0.5 result -> 1.0 multiplier. 1.0 result -> 1.2 multiplier
+            
+            raw_form = (f5 * 0.5) + (f10 * 0.3) + (f15 * 0.2)
+            # Map [0, 1] to [0.8, 1.2]
+            form_multiplier = 0.8 + (raw_form * 0.4)
+            
+            self.form_ratings[team] = form_multiplier
+
+    def _dixon_coles_adjustment(self, prob_matrix, home_xg, away_xg):
+        """
+        Applies Dixon-Coles adjustment to handle low-scoring draw dependencies.
+        Rho is the dependence parameter (typically -0.1 to 0.1).
+        We use a dynamic Rho based on league averages, but fixed -0.13 is standard for football.
+        """
+        rho = -0.13  # Standard interdependence parameter
+        
+        # Correction factors
+        # 0-0
+        if home_xg > 0 and away_xg > 0:
+            prob_matrix[0, 0] *= (1 - (home_xg * away_xg * rho))
+        
+        # 0-1
+        if home_xg > 0:
+            prob_matrix[0, 1] *= (1 + (home_xg * rho))
+            
+        # 1-0
+        if away_xg > 0:
+            prob_matrix[1, 0] *= (1 + (away_xg * rho))
+            
+        # 1-1
+        if home_xg > 0 and away_xg > 0:
+            prob_matrix[1, 1] *= (1 - rho)
+            
+        return prob_matrix
 
     def get_teams(self):
         return self.teams

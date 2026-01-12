@@ -27,7 +27,7 @@ class EloRatingSystem:
         """Calculate expected score for team A vs team B."""
         return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     
-    def update_ratings(self, home_team, away_team, home_goals, away_goals, match_type='tournament'):
+    def update_ratings(self, home_team, away_team, home_goals, away_goals, match_type='tournament', home_shots_ot=None, away_shots_ot=None):
         """
         Update Elo ratings based on match result.
         
@@ -36,7 +36,10 @@ class EloRatingSystem:
             away_team: Name of away team
             home_goals: Goals scored by home team
             away_goals: Goals scored by away team
+            away_goals: Goals scored by away team
             match_type: 'tournament', 'qualifier', or 'friendly'
+            home_shots_ot: (Optional) Home shots on target
+            away_shots_ot: (Optional) Away shots on target
         """
         # Get current ratings
         home_rating = self.get_rating(home_team)
@@ -63,14 +66,39 @@ class EloRatingSystem:
             k *= 1.5  # Tournaments more important
         elif match_type == 'friendly':
             k *= 0.5  # Friendlies less important
-        # Qualifiers use base k_factor
         
-        # Goal difference multiplier (bigger wins = bigger rating change)
+        # === 1. GOAL DIFFERENCE MULTIPLIER ===
+        # (Bigger wins = bigger rating change)
         goal_diff = abs(home_goals - away_goals)
-        multiplier = 1.0 + goal_diff * 0.1  # +10% per goal difference
-        multiplier = min(multiplier, 2.0)  # Cap at 2x
+        goal_multiplier = 1.0 + goal_diff * 0.1  # +10% per goal difference
+        goal_multiplier = min(goal_multiplier, 2.0)  # Cap at 2x
         
-        k *= multiplier
+        # === 2. DOMINATION MULTIPLIER (xG / Shots Logic) ===
+        # If we have shot data, adjust K based on fairness of result
+        domination_multiplier = 1.0
+        
+        if home_shots_ot is not None and away_shots_ot is not None:
+            # Avoid division by zero
+            total_shots = home_shots_ot + away_shots_ot
+            if total_shots > 5:
+                home_domination = home_shots_ot / total_shots
+                
+                # Case A: Lucky Win (Won but dominated in shots)
+                # e.g. Home wins but had < 40% of shots
+                if home_actual == 1.0 and home_domination < 0.4:
+                    domination_multiplier = 0.7  # "Lucky win" - earn fewer points
+                elif away_actual == 1.0 and home_domination > 0.6:
+                    domination_multiplier = 0.7  # "Lucky win" for away
+                    
+                # Case B: Dominant Win (Won and dominated shots)
+                # e.g. Home wins and had > 70% of shots
+                elif home_actual == 1.0 and home_domination > 0.7:
+                    domination_multiplier = 1.2  # "Convincing win" - earn more points
+                elif away_actual == 1.0 and home_domination < 0.3:
+                    domination_multiplier = 1.2
+        
+        # Apply multipliers
+        k *= goal_multiplier * domination_multiplier
         
         # Update ratings
         self.ratings[home_team] = home_rating + k * (home_actual - home_expected)
@@ -99,7 +127,15 @@ class EloRatingSystem:
             away_goals = row['FTAG']
             match_type = row.get('MatchType', 'tournament')
             
-            self.update_ratings(home_team, away_team, home_goals, away_goals, match_type)
+            # Extract shots if available (handle NaN with 0 or None)
+            home_shots_ot = row.get('HST', None)
+            away_shots_ot = row.get('AST', None)
+            
+            # Ensure valid numbers
+            if pd.isna(home_shots_ot): home_shots_ot = None
+            if pd.isna(away_shots_ot): away_shots_ot = None
+            
+            self.update_ratings(home_team, away_team, home_goals, away_goals, match_type, home_shots_ot, away_shots_ot)
     
     def get_all_ratings(self):
         """Return all current Elo ratings as a dict."""
