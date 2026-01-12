@@ -8,11 +8,22 @@ def download_data():
     
     leagues = {
         "E0": "Premier League",
+        "E1": "Championship",
+        "E2": "League 1",
+        "E3": "League 2",
         "D1": "Bundesliga",
+        "D2": "Bundesliga 2",
         "I1": "Serie A",
+        "I2": "Serie B",
         "SP1": "La Liga",
+        "SP2": "Segunda Division",
         "F1": "Ligue 1",
-        "F2": "Ligue 2"
+        "F2": "Ligue 2",
+        "N1": "Eredivisie (Pays-Bas)",
+        "P1": "Liga NOS (Portugal)",
+        "B1": "Jupiler Pro League (Belgique)",
+        "T1": "Super Lig (Turquie)",
+        "G1": "Super League (Grece)"
     }
 
     data_dir = "data"
