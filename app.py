@@ -122,33 +122,32 @@ def trigger_update():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# === AUTO UPDATE ON STARTUP (Global Scope for Gunicorn) ===
+try:
+    import auto_update
+    import time
+    
+    print("[INFO] Checking data freshness...")
+    # Simple check: if main file is older than 24h or missing
+    should_update = False
+    data_dir = "data"
+    proxy_file = os.path.join(data_dir, "E0_2526.csv") # Check current English season as proxy
+    
+    if not os.path.exists(data_dir) or not os.path.exists(proxy_file):
+        should_update = True
+    elif time.time() - os.path.getmtime(proxy_file) > 86400: # 24h
+        should_update = True
+        
+    if should_update:
+        print("[INFO] Data is old or missing. Updating...")
+        auto_update.main()
+    else:
+        print("[INFO] Data is up to date.")
+        
+except Exception as e:
+    print(f"[WARNING] Startup update check failed: {e}")
+
 if __name__ == '__main__':
     print("=== Football Predictor Web App ===")
-    
-    # === AUTO UPDATE ON STARTUP ===
-    try:
-        import auto_update
-        import time
-        
-        print("[INFO] Checking data freshness...")
-        # Simple check: if main file is older than 24h or missing
-        should_update = False
-        data_dir = "data"
-        proxy_file = os.path.join(data_dir, "E0_2526.csv") # Check current English season as proxy
-        
-        if not os.path.exists(data_dir) or not os.path.exists(proxy_file):
-            should_update = True
-        elif time.time() - os.path.getmtime(proxy_file) > 86400: # 24h
-            should_update = True
-            
-        if should_update:
-            print("[INFO] Data is old. Updating...")
-            auto_update.main()
-        else:
-            print("[INFO] Data is up to date.")
-            
-    except Exception as e:
-        print(f"[WARNING] Startup update check failed: {e}")
-        
     print("Ouvrez votre navigateur sur : http://localhost:5000")
     app.run(debug=True, host='0.0.0.0', port=5000)
