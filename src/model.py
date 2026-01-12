@@ -212,6 +212,35 @@ class Ligue1Predictor:
         a_attack *= a_form
         a_defense *= (2 - a_form)
         
+        # === 3. PRESTIGE BOOST (Phase 5) ===
+        # Stabilize results for top teams (prevents them from dropping too low due to bad form)
+        # Tier 1 (Galactics) +5% | Tier 2 (Contenders) +3%
+        PRESTIGE_BOOSTS = {
+            # Tier 1 (+5%)
+            "Man City": 1.05, "Liverpool": 1.05, "Arsenal": 1.05,
+            "Real Madrid": 1.05, "Barcelona": 1.05,
+            "Bayern Munich": 1.05, "Leverkusen": 1.05,
+            "Paris SG": 1.05,
+            "Inter": 1.05,
+            
+            # Tier 2 (+3%)
+            "Chelsea": 1.03, "Tottenham": 1.03,
+            "Atletico Madrid": 1.03,
+            "Dortmund": 1.03, "Leipzig": 1.03,
+            "Juventus": 1.03, "Milan": 1.03, "Napoli": 1.03, "Atalanta": 1.03,
+            "Benfica": 1.03, "Porto": 1.03, "Sporting CP": 1.03,
+            "PSV Eindhoven": 1.03, "Ajax": 1.03, "Feyenoord": 1.03
+        }
+        
+        h_prestige = PRESTIGE_BOOSTS.get(home_team, 1.0)
+        a_prestige = PRESTIGE_BOOSTS.get(away_team, 1.0)
+        
+        # Apply Prestige (Boost Attack, Improve Defense)
+        h_attack *= h_prestige
+        h_defense *= (2 - h_prestige) 
+        a_attack *= a_prestige
+        a_defense *= (2 - a_prestige)
+        
         # Get Neutral Venue Adjustments
         if neutral_venue:
             # Average out Home/Away advantages
