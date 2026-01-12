@@ -216,28 +216,54 @@ class Ligue1Predictor:
         # === MODIFIER CALCULATION (ADDITIVE LOGIC) ===
         # v5.2: Switch from Multiplicative (A*B*C) to Additive (1 + A + B + C) to prevent exponential blowouts
         
+        # === LEGACY MODE FOR AFCON / INTERNATIONAL ===
+        # User Feedback: AFCON predictions were better "at the start".
+        # Advanced modifiers (Form, Elo) introduce noise for international teams 
+        # because matches are too sparse (months apart).
+        # We detect AFCON via the "Goals Only" mode trigger (weight_xg == 0) or specific code.
+        is_legacy_mode = (self.weight_xg == 0.0) 
+        
+        if is_legacy_mode:
+            # Force everything to Neutral (1.0) -> Pure Stats Model
+            h_form = 1.0
+            a_form = 1.0
+            prestige_enabled = False
+            elo_enabled = False
+        else:
+            h_form = self.form_ratings.get(home_team, 1.0)
+            a_form = self.form_ratings.get(away_team, 1.0)
+            prestige_enabled = True
+            elo_enabled = True
+
+        # === MODIFIER CALCULATION (ADDITIVE LOGIC) ===
+        # v5.2: Switch from Multiplicative (A*B*C) to Additive (1 + A + B + C)
+        
         # 1. Form Modifier (Relative to 1.0)
-        h_form_mod = self.form_ratings.get(home_team, 1.0) - 1.0
-        a_form_mod = self.form_ratings.get(away_team, 1.0) - 1.0
+        h_form_mod = (h_form - 1.0)
+        a_form_mod = (a_form - 1.0)
         
         # 2. Prestige Modifier (Relative to 1.0)
-        # Tier 1 (+4%) Tier 2 (+2%) - Restored slightly higher values now that stacking is fixed
-        PRESTIGE_BOOSTS = {
-            "Man City": 1.04, "Liverpool": 1.04, "Arsenal": 1.04,
-            "Real Madrid": 1.04, "Barcelona": 1.04, "Bayern Munich": 1.04, "Leverkusen": 1.04,
-            "Paris SG": 1.04, "Inter": 1.04,
-            "Chelsea": 1.02, "Tottenham": 1.02, "Atletico Madrid": 1.02,
-            "Dortmund": 1.02, "Leipzig": 1.02, "Juventus": 1.02, "Milan": 1.02,
-            "Benfica": 1.02, "Porto": 1.02, "Sporting CP": 1.02
-        }
-        h_prestige_mod = PRESTIGE_BOOSTS.get(home_team, 1.0) - 1.0
-        a_prestige_mod = PRESTIGE_BOOSTS.get(away_team, 1.0) - 1.0
+        h_prestige_mod = 0.0
+        a_prestige_mod = 0.0
+        
+        if prestige_enabled:
+            PRESTIGE_BOOSTS = {
+                "Man City": 1.04, "Liverpool": 1.04, "Arsenal": 1.04,
+                "Real Madrid": 1.04, "Barcelona": 1.04, "Bayern Munich": 1.04, "Leverkusen": 1.04,
+                "Paris SG": 1.04, "Inter": 1.04,
+                "Chelsea": 1.02, "Tottenham": 1.02, "Atletico Madrid": 1.02,
+                "Dortmund": 1.02, "Leipzig": 1.02, "Juventus": 1.02, "Milan": 1.02,
+                "Benfica": 1.02, "Porto": 1.02, "Sporting CP": 1.02
+            }
+            h_prestige_mod = PRESTIGE_BOOSTS.get(home_team, 1.0) - 1.0
+            a_prestige_mod = PRESTIGE_BOOSTS.get(away_team, 1.0) - 1.0
         
         # 3. Elo Modifier (Relative to 1.0)
-        elo_diff = self.elo_system.get_rating_difference(home_team, away_team)
-        # 1 point per 1400 difference
-        elo_val = elo_diff / 1400
-        elo_val = max(-0.25, min(elo_val, 0.25)) # Clamp effect size +/- 25%
+        elo_val = 0.0
+        if elo_enabled:
+            elo_diff = self.elo_system.get_rating_difference(home_team, away_team)
+            elo_val = elo_diff / 1400
+            elo_val = max(-0.25, min(elo_val, 0.25))
         
         # Calculate Total Modifiers (Additive)
         # Home Attack gets: Form + Prestige + (Elo if +)
