@@ -122,30 +122,41 @@ def trigger_update():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# === AUTO UPDATE ON STARTUP (Global Scope for Gunicorn) ===
-try:
-    import auto_update
-    import time
-    
-    print("[INFO] Checking data freshness...")
-    # Simple check: if main file is older than 24h or missing
-    should_update = False
-    data_dir = "data"
-    proxy_file = os.path.join(data_dir, "E0_2526.csv") # Check current English season as proxy
-    
-    if not os.path.exists(data_dir) or not os.path.exists(proxy_file):
-        should_update = True
-    elif time.time() - os.path.getmtime(proxy_file) > 86400: # 24h
-        should_update = True
+# === AUTO UPDATE ON STARTUP (Background Thread) ===
+def start_background_update():
+    """Runs data update in background to not block Gunicorn startup."""
+    try:
+        import auto_update
+        import time
         
-    if should_update:
-        print("[INFO] Data is old or missing. Updating...")
-        auto_update.main()
-    else:
-        print("[INFO] Data is up to date.")
+        print("[INFO] Checking data freshness (Background)...")
+        # Simple check: if main file is older than 24h or missing
+        should_update = False
+        data_dir = "data"
+        proxy_file = os.path.join(data_dir, "E0_2526.csv") 
         
-except Exception as e:
-    print(f"[WARNING] Startup update check failed: {e}")
+        if not os.path.exists(data_dir) or not os.path.exists(proxy_file):
+            should_update = True
+        elif time.time() - os.path.getmtime(proxy_file) > 86400: # 24h
+            should_update = True
+            
+        if should_update:
+            print("[INFO] Data is old or missing. Updating in background...")
+            auto_update.main()
+            # Clear cache after update
+            MODELS.clear()
+            print("[INFO] Background update complete & Cache cleared.")
+        else:
+            print("[INFO] Data is up to date.")
+            
+    except Exception as e:
+        print(f"[WARNING] Background update failed: {e}")
+
+# Start the background thread immediately on import
+import threading
+update_thread = threading.Thread(target=start_background_update)
+update_thread.daemon = True # Daemonize thread
+update_thread.start()
 
 if __name__ == '__main__':
     print("=== Football Predictor Web App ===")
