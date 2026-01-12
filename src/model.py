@@ -129,8 +129,18 @@ class Ligue1Predictor:
         avg_away_xg = (self.df['Estimated_xG_Away'] * self.df['Weight']).sum() / total_weight
         
         # Global League Average (Hybrid: 40% Goals, 60% xG)
-        self.avg_home_strength = (avg_home_goals * 0.4) + (avg_home_xg * 0.6)
-        self.avg_away_strength = (avg_away_goals * 0.4) + (avg_away_xg * 0.6)
+        # CHECK: If xG averages are extremely low (indicating missing data), fall back to 100% Goals
+        if avg_home_xg < 0.5: # Threshold for "missing shot data"
+            print(f"[INFO] Low xG detected ({avg_home_xg:.2f}). Switching to Goals-Only model for {self.league_code}.")
+            self.avg_home_strength = avg_home_goals
+            self.avg_away_strength = avg_away_goals
+            self.weight_goals = 1.0
+            self.weight_xg = 0.0
+        else:
+            self.weight_goals = 0.4
+            self.weight_xg = 0.6
+            self.avg_home_strength = (avg_home_goals * self.weight_goals) + (avg_home_xg * self.weight_xg)
+            self.avg_away_strength = (avg_away_goals * self.weight_goals) + (avg_away_xg * self.weight_xg)
         
         # Calculate weighted stats per team with strict Home/Away separation
         def weighted_stats(group, is_home=True):
@@ -142,22 +152,22 @@ class Ligue1Predictor:
                 # Scored at Home
                 goals_scored = (group['FTHG'] * group['Weight']).sum() / total_w
                 xg_scored = (group['Estimated_xG_Home'] * group['Weight']).sum() / total_w
-                hybrid_scored = (goals_scored * 0.4) + (xg_scored * 0.6)
+                hybrid_scored = (goals_scored * self.weight_goals) + (xg_scored * self.weight_xg)
                 
                 # Conceded at Home
                 goals_conceded = (group['FTAG'] * group['Weight']).sum() / total_w
                 xg_conceded = (group['Estimated_xG_Away'] * group['Weight']).sum() / total_w
-                hybrid_conceded = (goals_conceded * 0.4) + (xg_conceded * 0.6)
+                hybrid_conceded = (goals_conceded * self.weight_goals) + (xg_conceded * self.weight_xg)
             else:
                 # Scored Away
                 goals_scored = (group['FTAG'] * group['Weight']).sum() / total_w
                 xg_scored = (group['Estimated_xG_Away'] * group['Weight']).sum() / total_w
-                hybrid_scored = (goals_scored * 0.4) + (xg_scored * 0.6)
+                hybrid_scored = (goals_scored * self.weight_goals) + (xg_scored * self.weight_xg)
                 
                 # Conceded Away
                 goals_conceded = (group['FTHG'] * group['Weight']).sum() / total_w
                 xg_conceded = (group['Estimated_xG_Home'] * group['Weight']).sum() / total_w
-                hybrid_conceded = (goals_conceded * 0.4) + (xg_conceded * 0.6)
+                hybrid_conceded = (goals_conceded * self.weight_goals) + (xg_conceded * self.weight_xg)
             
             return pd.Series({'scored': hybrid_scored, 'conceded': hybrid_conceded})
         
@@ -342,6 +352,23 @@ class Ligue1Predictor:
                 else:
                     prob_away_win += p
                     away_win_scores.append(((h, a), p))
+        
+        # Normalize Probabilities (Dixon-Coles can distort sum to != 1.0)
+        total_prob = prob_home_win + prob_draw + prob_away_win
+        if total_prob > 0:
+            prob_home_win /= total_prob
+            prob_draw /= total_prob
+            prob_away_win /= total_prob
+            
+            # Re-normalize individual score probabilities for display
+            for i in range(len(home_win_scores)):
+                home_win_scores[i] = (home_win_scores[i][0], home_win_scores[i][1] / total_prob)
+            for i in range(len(draw_scores)):
+                draw_scores[i] = (draw_scores[i][0], draw_scores[i][1] / total_prob)
+            for i in range(len(away_win_scores)):
+                away_win_scores[i] = (away_win_scores[i][0], away_win_scores[i][1] / total_prob)
+            # Re-normalize global list
+            all_scores = [((s[0], s[1]), p / total_prob) for (s, p) in all_scores]
         
         # HYBRID INTELLIGENT SELECTION
         # Score 1: Most probable score from the most likely outcome (COHERENCE)
