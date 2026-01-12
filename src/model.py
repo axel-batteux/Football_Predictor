@@ -247,10 +247,10 @@ class Ligue1Predictor:
         is_legacy_mode = (self.weight_xg == 0.0) 
         
         if is_legacy_mode:
-            # Force everything to Neutral (1.0) -> Pure Stats Model
+            # Force Form/Elo to Neutral, BUT Keep Prestige (Class Difference)
             h_form = 1.0
             a_form = 1.0
-            prestige_enabled = False
+            prestige_enabled = True # ENABLED: Senegal needs to be stronger than Sudan
             elo_enabled = False
         else:
             h_form = self.form_ratings.get(home_team, 1.0)
@@ -271,12 +271,22 @@ class Ligue1Predictor:
         
         if prestige_enabled:
             PRESTIGE_BOOSTS = {
+                # EUROPE Tier 1 (+4%)
                 "Man City": 1.04, "Liverpool": 1.04, "Arsenal": 1.04,
                 "Real Madrid": 1.04, "Barcelona": 1.04, "Bayern Munich": 1.04, "Leverkusen": 1.04,
                 "Paris SG": 1.04, "Inter": 1.04,
+                # EUROPE Tier 2 (+2%)
                 "Chelsea": 1.02, "Tottenham": 1.02, "Atletico Madrid": 1.02,
                 "Dortmund": 1.02, "Leipzig": 1.02, "Juventus": 1.02, "Milan": 1.02,
-                "Benfica": 1.02, "Porto": 1.02, "Sporting CP": 1.02
+                "Benfica": 1.02, "Porto": 1.02, "Sporting CP": 1.02,
+                
+                # AFRICA Tier 1 (Giants - Boosted for disparity vs small nations) (+5%)
+                "Senegal": 1.05, "Morocco": 1.05, "Egypt": 1.05, 
+                "Nigeria": 1.05, "Ivory Coast": 1.05,
+                
+                # AFRICA Tier 2 (Strong) (+3%)
+                "Cameroon": 1.03, "Algeria": 1.03, "Mali": 1.03, 
+                "South Africa": 1.03, "Tunisia": 1.03, "Ghana": 1.03
             }
             h_prestige_mod = PRESTIGE_BOOSTS.get(home_team, 1.0) - 1.0
             a_prestige_mod = PRESTIGE_BOOSTS.get(away_team, 1.0) - 1.0
@@ -340,11 +350,10 @@ class Ligue1Predictor:
         avg_goals = (self.avg_home_strength + self.avg_away_strength) / 2 if neutral_venue else self.avg_home_strength
         
         # === TOURNAMENT TUNING (AFCON) ===
-        # Recent results (Jan 2026) show AFCON is defensive/tight.
-        # Many 1-0, 1-1, 0-0. Favorites win narrowly.
-        if is_legacy_mode:
-             # Reduce goal expectation by 15% to match "Tournament Meta"
-             avg_goals *= 0.85
+        # v5.3: REMOVED Defensive Damper (0.85x) because user reported "Too many 0-0s".
+        # We rely on Prestige to create the gap (3-1) without artificially suppressing goals.
+        # if is_legacy_mode:
+        #      avg_goals *= 0.85 (REMOVED)
         
         home_xg = h_attack * a_defense * avg_goals
         away_xg = a_attack * h_defense * avg_goals

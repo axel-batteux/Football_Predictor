@@ -48,45 +48,39 @@ def test_model():
         print(f"Prediction Exception: {e}")
 
     # 4. Test Elo with Shots
-    print("\n[5] Testing AFCON Host Advantage (Morocco)...")
-    # Manually trigger the conditions seen in app.py
-    # 1. Force Legacy Mode (weight_xg = 0)
-    # 2. Inject Modifiers
+    print("\n[5] Testing AFCON Prestige (Senegal vs Sudan)...")
+    # Manually trigger Legacy Mode and Prestige Disparity
     
-    # Temporarily set model to Tournament Mode
     predictor.weight_xg = 0.0
     predictor.weight_goals = 1.0
     
-    # Simulate Morocco vs random team
-    modifiers = {
-        'Morocco': {'attack': 1.20, 'defense': 0.90}
-    }
+    # Simulate Senegal (Tier 1 African) vs Sudan (Tier 3/None)
+    # Since we don't have African data loaded in test, we use Man City (Simulating Senegal) vs Fulham (Simulating Sudan)
+    # We Inject MANUAL modifiers to mimic the Prestige Boosts we just added to model.py
+    # Senegal gets +5% (Attack) and -5% (Defense) from Prestige logic
+    
+    team_fav = "Man City" # Acting as Senegal
+    team_und = "Fulham"   # Acting as Sudan
+    
+    # In model.py, Prestige is auto-lookup. Here we rely on the fact that Man City IS in the Prestige dict (+4%).
+    # So we don't need manual modifiers if we use Man City.
+    # Man City has +4% built-in. Fulham has 0%.
+    # This should be enough to show dominance even in Legacy Mode.
     
     try:
-        # Note: We use 'Morocco' if it exists in the dummy data loaded, otherwise we skip
-        # For this test script, we loaded PL data. Morocco isn't in PL.
-        # So we test with "Man City" acting as Morocco to verify modifier logic works in Legacy Mode
-        
-        team_test = "Man City"
-        opp_test = "Liverpool"
-        
-        # apply host boost to Man City
-        modifiers_test = {
-            team_test: {'attack': 1.20, 'defense': 0.90} # Simulating Morocco Boost
-        }
-        
-        res = predictor.predict_match(team_test, opp_test, neutral_venue=True, modifiers=modifiers_test)
-        print(f"   - Match (Simulated AFCON): {team_test} (Host) vs {opp_test}")
+        res = predictor.predict_match(team_fav, team_und, neutral_venue=True)
+        print(f"   - Match (Simulated AFCON): {team_fav} (Senegal) vs {team_und} (Soudan)")
         print(f"   - Win Prob: {res['win_prob']}%")
         print(f"   - Most Likely: {res['most_likely_score']}")
+        print(f"   - Expected Goals: {res['expected_goals_home']} - {res['expected_goals_away']}")
         
-        if res['win_prob'] > 50:
-             print("OK Host Advantage is working (Win Prob > 50%).")
+        if res['win_prob'] > 65:
+             print("OK Prestige is working (Win Prob > 65%).")
         else:
-             print("WARNING Host Advantage might be weak.")
+             print("WARNING Favorite dominance is weak.")
              
     except Exception as e:
-        print(f"AFCON Test Skipped (Teams not in loaded data): {e}")
+        print(f"AFCON Test Skipped: {e}")
 
     # Restore Model State
     predictor.weight_xg = 0.6
