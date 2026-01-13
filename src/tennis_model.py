@@ -2,120 +2,181 @@ import pandas as pd
 import numpy as np
 import os
 
-class TennisElo:
+class AdvancedTennisPredictor:
     def __init__(self):
-        # ratings[player_name] = {'Hard': 1500, 'Clay': 1500, 'Grass': 1500, 'Overall': 1500}
         self.ratings = {}
-        self.k_factor_surface = 32 # Higher impact for surface specific mastery
-        self.k_factor_overall = 16 # Lower impact for general form
+        self.history = [] # List of dicts: {winner, loser, surface, score, date}
+        self.k_factor_surface = 32
+        self.k_factor_overall = 16
         
-        # Keep track of match counts for reliability
-        self.match_counts = {}
-
     def get_rating(self, player, surface):
-        """Returns the Effective Elo for a player on a specific surface."""
         if player not in self.ratings:
             return 1500.0
-        
-        # Logic: 80% Surface, 20% Overall
-        # If surface is unknown or 'Carpet' (rare), fallback to Hard or Overall
         if surface not in ['Hard', 'Clay', 'Grass']:
             surface = 'Hard'
-            
-        surf_rating = self.ratings[player].get(surface, 1500.0)
-        overall_rating = self.ratings[player].get('Overall', 1500.0)
         
-        # User Requirement: "Prends bien en compte les surfaces" -> Heavy weighting.
-        effective_elo = (surf_rating * 0.8) + (overall_rating * 0.2)
-        return effective_elo
+        surf = self.ratings[player].get(surface, 1500.0)
+        overall = self.ratings[player].get('Overall', 1500.0)
+        return (surf * 0.8) + (overall * 0.2)
 
     def update_ratings(self, winner, loser, surface):
-        if winner not in self.ratings:
-            self.ratings[winner] = {'Hard': 1500.0, 'Clay': 1500.0, 'Grass': 1500.0, 'Overall': 1500.0}
-        if loser not in self.ratings:
-            self.ratings[loser] = {'Hard': 1500.0, 'Clay': 1500.0, 'Grass': 1500.0, 'Overall': 1500.0}
-            
+        # Initialize if new
+        for p in [winner, loser]:
+            if p not in self.ratings:
+                self.ratings[p] = {'Hard': 1500.0, 'Clay': 1500.0, 'Grass': 1500.0, 'Overall': 1500.0}
+        
         if surface not in ['Hard', 'Clay', 'Grass']:
-            return # Skip unsupported surfaces (Carpet, etc)
+            return
 
-        # 1. Update Surface Specific Elo
-        w_surf_elo = self.ratings[winner][surface]
-        l_surf_elo = self.ratings[loser][surface]
+        # Surface Update
+        w_elo, l_elo = self.ratings[winner][surface], self.ratings[loser][surface]
+        w_prob = 1 / (1 + 10 ** ((l_elo - w_elo) / 400))
+        delta = self.k_factor_surface * (1 - w_prob)
+        self.ratings[winner][surface] += delta
+        self.ratings[loser][surface] -= delta
         
-        w_prob = 1 / (1 + 10 ** ((l_surf_elo - w_surf_elo) / 400))
-        
-        # Calculate Delta
-        delta_surf = self.k_factor_surface * (1 - w_prob)
-        
-        self.ratings[winner][surface] += delta_surf
-        self.ratings[loser][surface] -= delta_surf
-        
-        # 2. Update Overall Elo
-        w_overall = self.ratings[winner]['Overall']
-        l_overall = self.ratings[loser]['Overall']
-        
-        w_prob_overall = 1 / (1 + 10 ** ((l_overall - w_overall) / 400))
-        delta_overall = self.k_factor_overall * (1 - w_prob_overall)
-        
-        self.ratings[winner]['Overall'] += delta_overall
-        self.ratings[loser]['Overall'] -= delta_overall
+        # Overall Update
+        w_ov, l_ov = self.ratings[winner]['Overall'], self.ratings[loser]['Overall']
+        w_prob_ov = 1 / (1 + 10 ** ((l_ov - w_ov) / 400))
+        delta_ov = self.k_factor_overall * (1 - w_prob_ov)
+        self.ratings[winner]['Overall'] += delta_ov
+        self.ratings[loser]['Overall'] -= delta_ov
 
     def train_from_csv(self, file_paths):
-        print("=== Training Tennis Elo Model ===")
+        print("=== Training Advanced Tennis Model ===")
         for path in file_paths:
             if not os.path.exists(path):
-                print(f"[WARNING] File not found: {path}")
                 continue
-                
-            print(f"Processing {path}...")
             try:
-                df = pd.read_csv(path, encoding='latin1') # Tennis-data often Latin1
+                df = pd.read_csv(path, encoding='latin1')
+                # Standardize columns
+                df.columns = [c.lower() for c in df.columns]
+                
                 # Check required columns
                 required = ['winner_name', 'loser_name', 'surface']
                 if not all(col in df.columns for col in required):
-                    print(f"Skipping {path}: Missing columns.")
                     continue
                 
-                # Sort by date if possible (tourney_date)
+                # Sort by date if possible
                 if 'tourney_date' in df.columns:
                     df = df.sort_values('tourney_date')
                 
                 for _, row in df.iterrows():
-                    self.update_ratings(row['winner_name'], row['loser_name'], row['surface'])
+                    w, l, s = row['winner_name'], row['loser_name'], row['surface']
+                    score = row.get('score', 'N/A')
+                    date = row.get('tourney_date', 'N/A')
                     
+                    self.update_ratings(w, l, s)
+                    self.history.append({
+                        'winner': w, 'loser': l, 'surface': s, 'score': score, 'date': date
+                    })
             except Exception as e:
-                print(f"Error reading {path}: {e}")
-        
-        print("Training complete.")
+                print(f"Error processing {path}: {e}")
+        print(f"Training complete. Processed {len(self.history)} matches.")
 
-    def predict_match(self, p1, p2, surface):
+    def get_all_players(self):
+        """Returns sorted list of all known players for Autocomplete."""
+        return sorted(list(self.ratings.keys()))
+
+    def get_head_to_head(self, p1, p2):
+        """Returns H2H stats between p1 and p2."""
+        h2h = {'p1_wins': 0, 'p2_wins': 0, 'matches': []}
+        for m in self.history:
+            if (m['winner'] == p1 and m['loser'] == p2):
+                h2h['p1_wins'] += 1
+                h2h['matches'].append(m)
+            elif (m['winner'] == p2 and m['loser'] == p1):
+                h2h['p2_wins'] += 1
+                h2h['matches'].append(m)
+        return h2h
+
+    def predict_match(self, p1, p2, surface, best_of=3):
         elo1 = self.get_rating(p1, surface)
         elo2 = self.get_rating(p2, surface)
         
+        # Win Probability (Log5)
         prob1 = 1 / (1 + 10 ** ((elo2 - elo1) / 400))
         prob2 = 1 - prob1
         
+        # Score Simulation
+        scores = self.simulate_set_scores(prob1, best_of)
+        
+        # H2H
+        h2h = self.get_head_to_head(p1, p2)
+        
+        # Betting Tip
+        tip = self.generate_tip(prob1, p1, p2, scores)
+
         return {
-            'player1': p1,
-            'player2': p2,
-            'surface': surface,
-            'elo1': round(elo1),
-            'elo2': round(elo2),
+            'player1': p1, 'player2': p2, 'surface': surface,
+            'elo1': round(elo1), 'elo2': round(elo2),
             'win_prob1': round(prob1 * 100, 1),
-            'win_prob2': round(prob2 * 100, 1)
+            'win_prob2': round(prob2 * 100, 1),
+            'history': h2h,
+            'set_scores': scores,
+            'format': f"Best of {best_of}",
+            'tip': tip
         }
 
-    def get_top_players(self, surface='Overall', n=10):
-        # Sort players by rating on specific surface
-        # We need to construct the result list manually to include the effective rating
-        players_with_ratings = []
-        for player in self.ratings:
-            effective_rating = self.get_rating(player, surface)
-            players_with_ratings.append((player, effective_rating))
+    def simulate_set_scores(self, p1_win_prob, best_of=3):
+        """
+        Estimates probabilities of specific set scores (2-0, 2-1 vs 0-2, 1-2).
+        Heuristic approach: Stronger favorites are more likely to win in straight sets.
+        """
+        p = p1_win_prob
+        q = 1 - p
+        
+        scores = []
+        
+        if best_of == 3:
+            # P(2-0) approx p^2 (simplified)
+            # P(2-1) approx 2 * p^2 * q
+            # Normalize to match match_win_prob sum
             
-        sorted_players = sorted(
-            players_with_ratings,
-            key=lambda x: x[1], 
-            reverse=True
-        )
-        return sorted_players[:n]
+            # Raw weights based on win prob
+            if p > 0.5:
+                prob_2_0 = p * 0.70 # Heavy bias to straight sets if strong fav
+                prob_2_1 = p * 0.30
+                prob_0_2 = q * 0.60
+                prob_1_2 = q * 0.40
+            else:
+                prob_0_2 = q * 0.70
+                prob_1_2 = q * 0.30
+                prob_2_0 = p * 0.60
+                prob_2_1 = p * 0.40
+                
+            scores = [
+                {'score': '2-0', 'prob': round(prob_2_0 * 100, 1)},
+                {'score': '2-1', 'prob': round(prob_2_1 * 100, 1)},
+                {'score': '0-2', 'prob': round(prob_0_2 * 100, 1)},
+                {'score': '1-2', 'prob': round(prob_1_2 * 100, 1)}
+            ]
+            
+        elif best_of == 5:
+            # Best of 5 logic
+            scores = [
+                {'score': '3-0', 'prob': round(p * 0.50 * 100, 1)},
+                {'score': '3-1', 'prob': round(p * 0.35 * 100, 1)},
+                {'score': '3-2', 'prob': round(p * 0.15 * 100, 1)},
+                {'score': '0-3', 'prob': round(q * 0.50 * 100, 1)},
+                {'score': '1-3', 'prob': round(q * 0.35 * 100, 1)},
+                {'score': '2-3', 'prob': round(q * 0.15 * 100, 1)}
+            ]
+            
+        # Sort by probability high to low
+        scores.sort(key=lambda x: x['prob'], reverse=True)
+        return scores
+
+    def generate_tip(self, p1_prob, p1, p2, scores):
+        top_score = scores[0]
+        
+        if p1_prob > 0.85:
+            return f"💎 **Banker**: Victoire {p1} (Très Sûr). Score probable: {top_score['score']}."
+        elif p1_prob > 0.65:
+            return f"✅ **Conseil**: Victoire {p1}. Value sur {top_score['score']}."
+        elif p1_prob < 0.15:
+            return f"💎 **Banker**: Victoire {p2} (Très Sûr)."
+        elif p1_prob < 0.35:
+            return f"✅ **Conseil**: Victoire {p2}."
+        else:
+            return "⚠️ **Match Risqué**: Probabilités proches (50/50). Privilégiez 'Plus de sets' ou 'Over Games'."

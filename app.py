@@ -1,14 +1,16 @@
 from flask import Flask, render_template, request, jsonify
 from src.model import Ligue1Predictor
-from src.tennis_model import TennisElo # Import Tennis Model
+from src.tennis_model import AdvancedTennisPredictor # Updated Import
 from src.tournament_sim import SQUAD_BOOSTS
 import os
+import threading
+import time
 
 app = Flask(__name__)
 
-# Cache des modèles pour éviter de recharger à chaque requête
+# --- CONFIGURATION & GLOBAL MODELS ---
 MODELS = {}
-tennis_model = TennisElo() # Global Tennis Model
+tennis_model = AdvancedTennisPredictor() # Global Tennis Model
 
 COMPETITIONS = {
     'PL': {'name': 'Premier League', 'code': 'E0', 'is_file': False},
@@ -31,6 +33,7 @@ COMPETITIONS = {
     'CAN': {'name': 'CAN (AFCON)', 'code': 'AFCON.csv', 'is_file': True}
 }
 
+# --- HELPER FUNCTIONS ---
 def get_predictor(comp_key):
     """Charge ou récupère le modèle depuis le cache."""
     if comp_key not in MODELS:
@@ -40,6 +43,23 @@ def get_predictor(comp_key):
         else:
             MODELS[comp_key] = Ligue1Predictor(league_code=comp['code'])
     return MODELS[comp_key]
+
+def load_tennis_model():
+    print("Loading Advanced Tennis Model...")
+    files = [
+        os.path.join("data/tennis", 'atp_2024.csv'),
+        os.path.join("data/tennis", 'wta_2024.csv')
+    ]
+    # Filter only existing files
+    valid_files = [f for f in files if os.path.exists(f)]
+    tennis_model.train_from_csv(valid_files)
+    count = len(tennis_model.get_all_players())
+    print(f"Tennis Model loaded with {len(valid_files)} files. {count} players indexed.")
+
+# Load tennis on startup
+load_tennis_model()
+
+# --- ROUTES ---
 
 @app.route('/')
 def index():
@@ -86,7 +106,6 @@ def predict():
                 
                 modifiers[team] = mods
         
-        # Get prediction
         result = predictor.predict_match(home_team, away_team, neutral_venue=neutral, modifiers=modifiers)
         
         if 'error' in result:
@@ -103,6 +122,31 @@ def get_teams(comp_key):
         predictor = get_predictor(comp_key)
         teams = predictor.get_teams()
         return jsonify({'teams': teams})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- TENNIS ROUTES ---
+
+@app.route('/tennis_players')
+def get_tennis_players():
+    """Returns list of all players for autocomplete."""
+    players = tennis_model.get_all_players()
+    return jsonify({'players': players})
+
+@app.route('/predict_tennis', methods=['POST'])
+def predict_tennis():
+    try:
+        data = request.json
+        p1 = data.get('player1')
+        p2 = data.get('player2')
+        surface = data.get('surface', 'Hard') # Default to Hard
+        best_of = int(data.get('best_of', 3)) # Default 3 sets
+        
+        if not p1 or not p2:
+            return jsonify({'error': 'Missing player names'}), 400
+            
+        prediction = tennis_model.predict_match(p1, p2, surface, best_of=best_of)
+        return jsonify(prediction)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -129,7 +173,6 @@ def start_background_update():
     """Runs data update in background to not block Gunicorn startup."""
     try:
         import auto_update
-        import time
         
         print("[INFO] Checking data freshness (Background)...")
         # Simple check: if main file is older than 24h or missing
@@ -154,41 +197,9 @@ def start_background_update():
     except Exception as e:
         print(f"[WARNING] Background update failed: {e}")
 
-# Start the background thread immediately on import
-import threading
 update_thread = threading.Thread(target=start_background_update)
-update_thread.daemon = True # Daemonize thread
+update_thread.daemon = True 
 update_thread.start()
-
-def load_tennis_model():
-    print("Loading Tennis Elo Model...")
-    files = [
-        os.path.join("data/tennis", 'atp_2024.csv'),
-        os.path.join("data/tennis", 'wta_2024.csv')
-    ]
-    # Filter only existing files
-    valid_files = [f for f in files if os.path.exists(f)]
-    tennis_model.train_from_csv(valid_files)
-    print(f"Tennis Model loaded with {len(valid_files)} files.")
-
-# Load tennis model on startup (Main thread is fine as it's fast)
-load_tennis_model()
-
-@app.route('/predict_tennis', methods=['POST'])
-def predict_tennis():
-    try:
-        data = request.json
-        p1 = data.get('player1')
-        p2 = data.get('player2')
-        surface = data.get('surface', 'Hard') # Default to Hard
-        
-        if not p1 or not p2:
-            return jsonify({'error': 'Missing player names'}), 400
-            
-        prediction = tennis_model.predict_match(p1, p2, surface)
-        return jsonify(prediction)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     print("=== Football Predictor Web App ===")

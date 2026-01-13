@@ -126,6 +126,7 @@ function showError(message) {
 // --- TENNIS LOGIC ---
 
 let currentSurface = 'Hard';
+let playersLoaded = false;
 
 function switchMode(mode) {
     // Buttons
@@ -141,9 +142,26 @@ function switchMode(mode) {
         document.getElementById('football-container').style.display = 'none';
         document.getElementById('tennis-container').style.display = 'block';
         document.getElementById('result').style.display = 'none';
-        // Hide previous tennis result if any
         document.getElementById('tennis-result').style.display = 'none';
+
+        if (!playersLoaded) loadTennisPlayers();
     }
+}
+
+function loadTennisPlayers() {
+    fetch('/tennis_players')
+        .then(r => r.json())
+        .then(data => {
+            const datalist = document.getElementById('tennis-players-list');
+            datalist.innerHTML = '';
+            data.players.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                datalist.appendChild(opt);
+            });
+            playersLoaded = true;
+        })
+        .catch(err => console.error("Error loading players", err));
 }
 
 function selectSurface(surface) {
@@ -157,6 +175,8 @@ function selectSurface(surface) {
 async function predictTennis() {
     const p1 = document.getElementById('p1-input').value.trim();
     const p2 = document.getElementById('p2-input').value.trim();
+    const bestOfSelection = document.getElementById('best-of-select');
+    const bestOf = bestOfSelection ? bestOfSelection.value : 3;
 
     if (!p1 || !p2) {
         showError('Entrez le nom des deux joueurs');
@@ -170,7 +190,8 @@ async function predictTennis() {
             body: JSON.stringify({
                 player1: p1,
                 player2: p2,
-                surface: currentSurface
+                surface: currentSurface,
+                best_of: bestOf
             })
         });
 
@@ -192,7 +213,7 @@ function displayResultTennis(data) {
 
     // Title
     document.getElementById('tennis-match-title').textContent = `${data.player1} vs ${data.player2}`;
-    document.getElementById('res-surface').textContent = `Surface: ${data.surface}`;
+    document.getElementById('res-surface').textContent = `Surface: ${data.surface} (${data.format})`;
 
     // Players Names
     document.getElementById('p1-name-display').textContent = data.player1;
@@ -208,6 +229,46 @@ function displayResultTennis(data) {
 
     document.getElementById('prob-p2').style.width = data.win_prob2 + '%';
     document.getElementById('prob-p2-val').textContent = data.win_prob2 + '%';
+
+    // --- ADVANCED STATS ---
+
+    // 1. Betting Tip (Markdown parsing simple)
+    const tipText = data.tip.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'); // Bold
+    const tipElem = document.getElementById('tennis-tip');
+    if (tipElem) tipElem.innerHTML = tipText;
+
+    // 2. Set Scores
+    let scoresHtml = '';
+    if (data.set_scores) {
+        data.set_scores.forEach(s => {
+            scoresHtml += `<div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span>${s.score}</span>
+                <span style="font-weight: bold;">${s.prob}%</span>
+            </div>`;
+        });
+    }
+    const scoresElem = document.getElementById('set-scores-list');
+    if (scoresElem) scoresElem.innerHTML = scoresHtml;
+
+    // 3. H2H
+    if (data.history) {
+        const h2h = data.history;
+        let h2hHtml = `<strong>Total:</strong> ${data.player1} ${h2h.p1_wins} - ${h2h.p2_wins} ${data.player2}<br>`;
+        h2hHtml += `<span style="font-size: 0.85em; opacity: 0.8;">Derniers matchs:</span><br>`;
+
+        // Show last 3 matches max
+        const lastMatches = h2h.matches.slice(-3).reverse();
+        if (lastMatches.length === 0) {
+            h2hHtml += "Aucune confrontation récente.";
+        } else {
+            lastMatches.forEach(m => {
+                const winner = m.winner === data.player1 ? data.player1 : data.player2;
+                h2hHtml += `• ${m.date.substring(0, 4)} (${m.surface}): <strong>${m.winner}</strong> (${m.score})<br>`;
+            });
+        }
+        const h2hElem = document.getElementById('h2h-stats');
+        if (h2hElem) h2hElem.innerHTML = h2hHtml;
+    }
 
     document.getElementById('tennis-result').scrollIntoView({ behavior: 'smooth' });
 }

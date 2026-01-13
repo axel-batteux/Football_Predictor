@@ -54,13 +54,15 @@
                 <h2>🎾 Prédiction Tennis</h2>
                 <div class="form-group">
                     <label>Joueur 1</label>
-                    <input type="text" id="p1-input" placeholder="Ex: Novak Djokovic, Carlos Alcaraz...">
+                    <input type="text" id="p1-input" placeholder="Ex: Novak Djokovic..." list="tennis-players-list">
                 </div>
                 <div class="vs">VS</div>
                 <div class="form-group">
                     <label>Joueur 2</label>
-                    <input type="text" id="p2-input" placeholder="Ex: Jannik Sinner, Rafael Nadal...">
+                    <input type="text" id="p2-input" placeholder="Ex: Carlos Alcaraz..." list="tennis-players-list">
                 </div>
+                <!-- Autocomplete Datalist -->
+                <datalist id="tennis-players-list"></datalist>
 
                 <div class="form-group">
                     <label>Surface</label>
@@ -69,6 +71,15 @@
                         <button class="surface-btn" onclick="selectSurface('Clay')">Clay</button>
                         <button class="surface-btn" onclick="selectSurface('Grass')">Grass</button>
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Format du Match</label>
+                    <select id="best-of-select"
+                        style="width: 100%; padding: 12px; border-radius: 10px; background: rgba(255,255,255,0.1); color: white; border: 2px solid rgba(255,255,255,0.3);">
+                        <option value="3" selected>Best of 3 (Standard)</option>
+                        <option value="5">Best of 5 (Grand Chelem)</option>
+                    </select>
                 </div>
 
                 <button class="predict-btn" onclick="predictTennis()">🔮 PRÉDIRE TENNIS</button>
@@ -138,6 +149,24 @@
                     </div>
                     <div class="prob-value" id="prob-p2-val"></div>
                     <div class="elo-tag" id="elo-p2">Elo: -</div>
+                </div>
+            </div>
+
+            <!-- Advanced Stats Grid -->
+            <div class="stats-grid tennis-advanced" style="grid-template-columns: 1fr; gap: 15px;">
+                <div class="stat-box full-width" style="text-align: left;">
+                    <div class="stat-label">💡 Conseil Paris Sportif</div>
+                    <div id="tennis-tip" class="stat-value tip-text" style="font-size: 1.1rem;"></div>
+                </div>
+
+                <div class="stat-box" style="text-align: left;">
+                    <div class="stat-label">Probabilité Sets</div>
+                    <div id="set-scores-list" style="font-size: 0.9rem; line-height: 1.6;"></div>
+                </div>
+
+                <div class="stat-box" style="text-align: left;">
+                    <div class="stat-label">Confrontations (H2H)</div>
+                    <div id="h2h-stats" style="font-size: 0.9rem; line-height: 1.6;"></div>
                 </div>
             </div>
         </div>
