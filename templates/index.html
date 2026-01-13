@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Prédicteur Football ⚽</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -13,36 +15,70 @@
             <p class="subtitle">Algorithme de prédiction par Loi de Poisson + Pondération Temporelle</p>
         </header>
 
-        <div class="card">
-            <h2>Sélectionnez la compétition</h2>
-            <div class="competition-grid">
-                {% for key, comp in competitions.items() %}
-                <button class="comp-btn" onclick="selectCompetition('{{ key }}')">
-                    {{ comp.name }}
-                </button>
-                {% endfor %}
+        <div class="mode-switch">
+            <button class="mode-btn active" onclick="switchMode('football')">⚽ Football</button>
+            <button class="mode-btn" onclick="switchMode('tennis')">🎾 Tennis</button>
+        </div>
+
+        <div id="football-container">
+            <div class="card">
+                <h2>Sélectionnez la compétition</h2>
+                <div class="competition-grid">
+                    {% for key, comp in competitions.items() %}
+                    <button class="comp-btn" onclick="selectCompetition('{{ key }}')">
+                        {{ comp.name }}
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="card" id="match-form" style="display: none;">
+                <h2>Entrez les équipes</h2>
+                <div class="form-group">
+                    <label>Équipe à Domicile</label>
+                    <input type="text" id="home-team" placeholder="Ex: PSG, Man City, Senegal..." list="teams-list">
+                </div>
+                <div class="vs">VS</div>
+                <div class="form-group">
+                    <label>Équipe à l'Extérieur</label>
+                    <input type="text" id="away-team" placeholder="Ex: Marseille, Arsenal, Nigeria..."
+                        list="teams-list">
+                </div>
+                <datalist id="teams-list"></datalist>
+                <button class="predict-btn" onclick="predict()">🔮 PRÉDIRE FOOTBALL</button>
             </div>
         </div>
 
-        <div class="card" id="match-form" style="display: none;">
-            <h2>Entrez les équipes</h2>
-            <div class="form-group">
-                <label>Équipe à Domicile</label>
-                <input type="text" id="home-team" placeholder="Ex: PSG, Man City, Senegal..." list="teams-list">
+        <div id="tennis-container" style="display: none;">
+            <div class="card">
+                <h2>🎾 Prédiction Tennis</h2>
+                <div class="form-group">
+                    <label>Joueur 1</label>
+                    <input type="text" id="p1-input" placeholder="Ex: Novak Djokovic, Carlos Alcaraz...">
+                </div>
+                <div class="vs">VS</div>
+                <div class="form-group">
+                    <label>Joueur 2</label>
+                    <input type="text" id="p2-input" placeholder="Ex: Jannik Sinner, Rafael Nadal...">
+                </div>
+
+                <div class="form-group">
+                    <label>Surface</label>
+                    <div class="surface-selector">
+                        <button class="surface-btn selected" onclick="selectSurface('Hard')">Hard</button>
+                        <button class="surface-btn" onclick="selectSurface('Clay')">Clay</button>
+                        <button class="surface-btn" onclick="selectSurface('Grass')">Grass</button>
+                    </div>
+                </div>
+
+                <button class="predict-btn" onclick="predictTennis()">🔮 PRÉDIRE TENNIS</button>
             </div>
-            <div class="vs">VS</div>
-            <div class="form-group">
-                <label>Équipe à l'Extérieur</label>
-                <input type="text" id="away-team" placeholder="Ex: Marseille, Arsenal, Nigeria..." list="teams-list">
-            </div>
-            <datalist id="teams-list"></datalist>
-            <button class="predict-btn" onclick="predict()">🔮 PRÉDIRE</button>
         </div>
 
         <div class="card" id="result" style="display: none;">
             <h2>Résultat de la Prédiction</h2>
             <div class="match-title" id="match-title"></div>
-            
+
             <div class="probabilities">
                 <div class="prob-item">
                     <div class="prob-label">Victoire Domicile</div>
@@ -81,9 +117,35 @@
             <div class="tip" id="tip"></div>
         </div>
 
+        <div class="card" id="tennis-result" style="display: none;">
+            <h2>Résultat Tennis 🎾</h2>
+            <div class="match-title" id="tennis-match-title"></div>
+            <div class="surface-badge" id="res-surface"></div>
+
+            <div class="probabilities">
+                <div class="prob-item">
+                    <div class="prob-label" id="p1-name-display">Joueur 1</div>
+                    <div class="prob-bar">
+                        <div class="prob-fill home" id="prob-p1"></div>
+                    </div>
+                    <div class="prob-value" id="prob-p1-val"></div>
+                    <div class="elo-tag" id="elo-p1">Elo: -</div>
+                </div>
+                <div class="prob-item">
+                    <div class="prob-label" id="p2-name-display">Joueur 2</div>
+                    <div class="prob-bar">
+                        <div class="prob-fill away" id="prob-p2"></div>
+                    </div>
+                    <div class="prob-value" id="prob-p2-val"></div>
+                    <div class="elo-tag" id="elo-p2">Elo: -</div>
+                </div>
+            </div>
+        </div>
+
         <div class="error" id="error" style="display: none;"></div>
     </div>
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
+
 </html>

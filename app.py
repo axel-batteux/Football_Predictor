@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from src.model import Ligue1Predictor
+from src.tennis_model import TennisElo # Import Tennis Model
 from src.tournament_sim import SQUAD_BOOSTS
 import os
 
@@ -7,6 +8,7 @@ app = Flask(__name__)
 
 # Cache des modèles pour éviter de recharger à chaque requête
 MODELS = {}
+tennis_model = TennisElo() # Global Tennis Model
 
 COMPETITIONS = {
     'PL': {'name': 'Premier League', 'code': 'E0', 'is_file': False},
@@ -157,6 +159,36 @@ import threading
 update_thread = threading.Thread(target=start_background_update)
 update_thread.daemon = True # Daemonize thread
 update_thread.start()
+
+def load_tennis_model():
+    print("Loading Tennis Elo Model...")
+    files = [
+        os.path.join("data/tennis", 'atp_2024.csv'),
+        os.path.join("data/tennis", 'wta_2024.csv')
+    ]
+    # Filter only existing files
+    valid_files = [f for f in files if os.path.exists(f)]
+    tennis_model.train_from_csv(valid_files)
+    print(f"Tennis Model loaded with {len(valid_files)} files.")
+
+# Load tennis model on startup (Main thread is fine as it's fast)
+load_tennis_model()
+
+@app.route('/predict_tennis', methods=['POST'])
+def predict_tennis():
+    try:
+        data = request.json
+        p1 = data.get('player1')
+        p2 = data.get('player2')
+        surface = data.get('surface', 'Hard') # Default to Hard
+        
+        if not p1 or not p2:
+            return jsonify({'error': 'Missing player names'}), 400
+            
+        prediction = tennis_model.predict_match(p1, p2, surface)
+        return jsonify(prediction)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     print("=== Football Predictor Web App ===")
